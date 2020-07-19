@@ -24,9 +24,32 @@ def link_shader(program):
 		raise RuntimeError("Shader not linked: %s" % error)
 
 
+def make_shader(source):
+	shader = {'program': gl.glCreateProgram()}
+	shader = {
+		'program': gl.glCreateProgram(),
+	}
+	if 'vertex' in source:
+		shader['vertex'] = gl.glCreateShader(gl.GL_VERTEX_SHADER)
+		gl.glShaderSource(shader['vertex'], source['vertex'])
+		compile_shader(shader['vertex'])
+		gl.glAttachShader(shader['program'], shader['vertex'])
+	if 'fragment' in source:
+		shader['fragment'] = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
+		gl.glShaderSource(shader['fragment'], source['fragment'])
+		compile_shader(shader['fragment'])
+		gl.glAttachShader(shader['program'], shader['fragment'])
+	link_shader(shader['program'])
+	if 'vertex' in source:
+		gl.glDetachShader(shader['program'], shader['vertex'])
+	if 'fragment' in source:
+		gl.glDetachShader(shader['program'], shader['fragment'])
+	return shader
+
+
 class RenderPass(object):
-	def __init__(self, shader, pass_definition):
-		self.shader = shader
+	def __init__(self, renderer, pass_definition):
+		self.renderer = renderer
 		self.code = pass_definition['code']
 		self.outputs = pass_definition['outputs']
 		self.inputs = pass_definition['inputs']
@@ -36,9 +59,9 @@ class RenderPass(object):
 			raise NotImplementedError("Pass with %d outputs not implemented" % len(outputs))
 
 	@staticmethod
-	def create(shader, pass_definition):
+	def create(renderer, pass_definition):
 		if pass_definition['type'] == 'image':
-			return ImageRenderPass(shader, pass_definition)
+			return ImageRenderPass(renderer, pass_definition)
 		else:
 			raise NotImplementedError("Shader pass %s not implemented" % pass_definition['type'])
 
@@ -47,20 +70,44 @@ class RenderPass(object):
 
 
 class ImageRenderPass(RenderPass):
+	vertex_shader_code = """attribute vec2 position;
+void main()
+{
+	gl_Position = vec4(position, 0.0, 1.0);
+}"""
+	fragment_shader_code = """
+void main()
+{
+	gl_FragColor = vec4(1, 1, 1, 1);
+}"""
+
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		self.framebuffer = gl.glGenFramebuffers(1)
 		self.image = gl.glGenTextures(1)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.shader.window_size[0], self.shader.window_size[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.window_size[0], self.renderer.window_size[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+		self.shader = make_shader({'vertex': self.vertex_shader_code, 'fragment': self.fragment_shader_code})
+
+		stride = self.renderer.vertex_surface.strides[0]
+		offset = ctypes.c_void_p(0)
+		loc = gl.glGetAttribLocation(self.shader['program'], "position")
+		gl.glEnableVertexAttribArray(loc)
+		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
+		gl.glVertexAttribPointer(loc, 2, gl.GL_FLOAT, False, stride, offset)
 
 	def render(self):
-		pass
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.image, 0);
+		gl.glViewport(0, 0, *self.renderer.window_size)
+		gl.glUseProgram(self.shader['program'])
+		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 
 
-class Shader(object):
+class Renderer(object):
 	vertex_shader_code = """attribute vec2 position;
 varying vec2 texcoord;
 void main()
@@ -68,8 +115,12 @@ void main()
 	gl_Position = vec4(position, 0.0, 1.0);
 	texcoord = position * vec2(0.5, -0.5) + vec2(0.5);
 }"""
-	fragment_shader_code = """uniform vec4 color;
-void main() { gl_FragColor = color; }"""
+	fragment_shader_code = """varying vec2 texcoord;
+uniform sampler2D texture;
+void main()
+{
+	gl_FragColor = texture2D(texture, texcoord);
+}"""
 
 	def __init__(self, shader_definition, window_size=None):
 		self.vertex_surface = np.array([(-1,+1), (+1,+1), (-1,-1), (+1,-1)], np.float32)
@@ -77,20 +128,7 @@ void main() { gl_FragColor = color; }"""
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface.nbytes, self.vertex_surface, gl.GL_DYNAMIC_DRAW)
 
-		self.shader = {
-			'program': gl.glCreateProgram(),
-			'vertex': gl.glCreateShader(gl.GL_VERTEX_SHADER),
-			'fragment': gl.glCreateShader(gl.GL_FRAGMENT_SHADER),
-		}
-		gl.glShaderSource(self.shader['vertex'], self.vertex_shader_code)
-		gl.glShaderSource(self.shader['fragment'], self.fragment_shader_code)
-		compile_shader(self.shader['vertex'])
-		compile_shader(self.shader['fragment'])
-		gl.glAttachShader(self.shader['program'], self.shader['vertex'])
-		gl.glAttachShader(self.shader['program'], self.shader['fragment'])
-		link_shader(self.shader['program'])
-		gl.glDetachShader(self.shader['program'], self.shader['vertex'])
-		gl.glDetachShader(self.shader['program'], self.shader['fragment'])
+		self.shader = make_shader({'vertex': self.vertex_shader_code, 'fragment': self.fragment_shader_code})
 
 		gl.glUseProgram(self.shader['program'])
 		stride = self.vertex_surface.strides[0]
@@ -99,10 +137,6 @@ void main() { gl_FragColor = color; }"""
 		gl.glEnableVertexAttribArray(loc)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glVertexAttribPointer(loc, 2, gl.GL_FLOAT, False, stride, offset)
-
-
-		loc = gl.glGetUniformLocation(self.shader['program'], "color")
-		gl.glUniform4f(loc, 0.0, 0.0, 1.0, 1.0)
 
 		self.window_size = window_size or (512, 512)
 		self.render_passes = []
@@ -124,6 +158,12 @@ void main() { gl_FragColor = color; }"""
 		gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 		gl.glUseProgram(self.shader['program'])
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
+
+		gl.glActiveTexture(gl.GL_TEXTURE0);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.output.image);
+		loc = gl.glGetUniformLocation(self.shader['program'], "texture")
+		gl.glUniform1i(loc, 0)
+
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 		glut.glutSwapBuffers()
 
@@ -149,12 +189,12 @@ def main():
 	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
 	glut.glutCreateWindow("Shadertoy")
 
-	shader = Shader(json.load(args.file))
-	glut.glutDisplayFunc(shader.display)
-	glut.glutReshapeFunc(shader.reshape)
-	glut.glutKeyboardFunc(shader.keyboard)
-	glut.glutIdleFunc(shader.display)
-	shader.reshape()
+	renderer = Renderer(json.load(args.file))
+	glut.glutDisplayFunc(renderer.display)
+	glut.glutReshapeFunc(renderer.reshape)
+	glut.glutKeyboardFunc(renderer.keyboard)
+	glut.glutIdleFunc(renderer.display)
+	renderer.reshape()
 
 	glut.glutMainLoop()
 

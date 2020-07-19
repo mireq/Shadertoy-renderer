@@ -11,7 +11,7 @@ import OpenGL.GLUT as glut
 import numpy as np
 
 
-FRAGMENT_SHADER_TEMPLATE = """#version 120
+FRAGMENT_SHADER_TEMPLATE = """#version 130
 
 uniform vec3      iResolution;           // viewport resolution (in pixels)
 uniform float     iTime;                 // shader playback time (in seconds)
@@ -22,18 +22,19 @@ uniform vec3      iChannelResolution[4]; // channel resolution (in pixels)
 uniform vec4      iMouse;                // mouse pixel coords. xy: current (if MLB down), zw: click
 uniform vec4      iDate;                 // (year, month, day, time in seconds)
 uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
+uniform vec2      iTileOffset;           // offset of tile
 %s
 
 %s
 
 void main()
 {
-	mainImage(gl_FragColor, gl_FragCoord.xy);
+	mainImage(gl_FragColor, gl_FragCoord.xy + iTileOffset);
 }
 
 """
 
-IDENTITY_VERTEX_SHADER = """#version 120
+IDENTITY_VERTEX_SHADER = """#version 130
 
 attribute vec2 position;
 
@@ -43,7 +44,7 @@ void main()
 }
 """
 
-TEXTURE_VERTEX_SHADER = """#version 120
+TEXTURE_VERTEX_SHADER = """#version 130
 
 attribute vec2 position;
 varying vec2 texcoord;
@@ -53,7 +54,7 @@ void main()
 	texcoord = position * vec2(0.5, 0.5) + vec2(0.5);
 }"""
 
-TEXTURE_FRAGMENT_SHADER = """#version 120
+TEXTURE_FRAGMENT_SHADER = """#version 130
 
 varying vec2 texcoord;
 uniform sampler2D texture;
@@ -162,6 +163,36 @@ class RenderPass(object):
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
+	def make_framebuffer(self, multisample=False):
+		image = gl.glGenTextures(1)
+		framebuffer = gl.glGenFramebuffers(1)
+		tile_image = gl.glGenTextures(1)
+		tile_framebuffer = gl.glGenFramebuffers(1)
+
+		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.resolution[0], self.renderer.resolution[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer);
+		if multisample:
+			gl.glBindTexture(gl.GL_TEXTURE_2D_MULTISAMPLE, tile_image);
+			gl.glTexImage2DMultisample(gl.GL_TEXTURE_2D_MULTISAMPLE, 4, gl.GL_RGBA8, self.renderer.tile_size[0], self.renderer.tile_size[1], gl.GL_FALSE)
+			gl.glBindTexture(gl.GL_TEXTURE_2D_MULTISAMPLE, 0);
+			gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D_MULTISAMPLE, tile_image, 0);
+		else:
+			gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.tile_size[0], self.renderer.tile_size[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+			gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
+			gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
+		return image, framebuffer, tile_image, tile_framebuffer
+
 	def __load_code_from_file(self, filename):
 		shader_dirname = os.path.dirname(self.renderer.shader_filename)
 		filename = os.path.abspath(os.path.join(shader_dirname, filename))
@@ -172,19 +203,35 @@ class RenderPass(object):
 class ImageRenderPass(RenderPass):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-		self.framebuffer = gl.glGenFramebuffers(1)
-		self.image = gl.glGenTextures(1)
-		gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.resolution[0], self.renderer.resolution[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+		framebuffer, image, tile_image, tile_framebuffer = self.make_framebuffer(multisample=self.renderer.multisample)
+		self.framebuffer = framebuffer
+		self.image = image
+		self.tile_image = tile_image
+		self.tile_framebuffer = tile_framebuffer
 
 	def render(self):
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
-		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.image, 0);
 		gl.glUseProgram(self.shader['program'])
-		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+
+		offsetLoc = gl.glGetUniformLocation(self.shader['program'], "iTileOffset")
+		if len(self.renderer.tiles) == 1 and not self.renderer.multisample:
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
+			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+		else:
+			for tile in self.renderer.tiles:
+				gl.glUniform2f(offsetLoc, float(tile[0]), float(tile[1]))
+
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer);
+				gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+
+				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.tile_framebuffer)
+				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, self.framebuffer)
+				gl.glBlitFramebuffer(0, 0, tile[2] - tile[0], tile[3] - tile[1], tile[0], tile[1], tile[2], tile[3], gl.GL_COLOR_BUFFER_BIT, gl.GL_LINEAR)
+				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
+				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
+
+				gl.glFinish()
 
 
 class Renderer(object):
@@ -206,6 +253,11 @@ class Renderer(object):
 
 		self.shader_filename = args.file.name
 		self.resolution = args.resolution
+		self.tile_size = self.resolution
+		if args.tile_size:
+			self.tile_size = args.tile_size
+		self.tiles = self.__calc_tiles()
+		self.multisample = args.multisample
 		self.render_passes = []
 		self.output = None
 		self.start_time = time.monotonic()
@@ -232,7 +284,11 @@ class Renderer(object):
 		gl.glUniform1i(loc, 0)
 
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+		gl.glFinish()
 		glut.glutSwapBuffers()
+
+	def idle(self):
+		glut.glutPostRedisplay()
 
 	def reshape(self, width, height):
 		gl.glViewport(0, 0, width, height)
@@ -251,6 +307,21 @@ class Renderer(object):
 				'time': time.monotonic() - self.start_time,
 			})
 			render_pass.render()
+
+	def __calc_tiles(self):
+		tiled_width = (self.resolution[0] + self.tile_size[0] - 1) // self.tile_size[0]
+		tiled_height = (self.resolution[1] + self.tile_size[1] - 1) // self.tile_size[1]
+		tiles = []
+		for x in range(tiled_width):
+			for y in range(tiled_height):
+				tile = (
+					x * self.tile_size[0],
+					y * self.tile_size[1],
+					min(x * self.tile_size[0] + self.tile_size[0], self.resolution[0]),
+					min(y * self.tile_size[1] + self.tile_size[1], self.resolution[1]),
+				)
+				tiles.append(tile)
+		return tiles
 
 
 def parse_resolution(val):
@@ -271,6 +342,8 @@ def main():
 	parser = argparse.ArgumentParser(description="Shadertoy renderer")
 	parser.add_argument('file', type=argparse.FileType('r'), help="Shader file")
 	parser.add_argument('--resolution', type=parse_resolution, default=(480, 270), help="Resolution")
+	parser.add_argument('--tile-size', type=parse_resolution, help="Tile size")
+	parser.add_argument('--multisample', action='store_true', help="Multisampling")
 	args = parser.parse_args()
 
 	os.environ['vblank_mode'] = '0'
@@ -283,7 +356,7 @@ def main():
 	glut.glutDisplayFunc(renderer.display)
 	glut.glutReshapeFunc(renderer.reshape)
 	glut.glutKeyboardFunc(renderer.keyboard)
-	glut.glutIdleFunc(renderer.display)
+	glut.glutIdleFunc(renderer.idle)
 	glut.glutReshapeWindow(*args.resolution);
 
 	glut.glutMainLoop()

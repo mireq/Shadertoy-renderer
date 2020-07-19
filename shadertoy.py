@@ -10,6 +10,58 @@ import OpenGL.GLUT as glut
 import numpy as np
 
 
+FRAGMENT_SHADER_TEMPLATE = """#version 120
+
+uniform vec3      iResolution;           // viewport resolution (in pixels)
+uniform float     iTime;                 // shader playback time (in seconds)
+uniform float     iTimeDelta;            // render time (in seconds)
+uniform int       iFrame;                // shader playback frame
+uniform float     iChannelTime[4];       // channel playback time (in seconds)
+uniform vec3      iChannelResolution[4]; // channel resolution (in pixels)
+uniform vec4      iMouse;                // mouse pixel coords. xy: current (if MLB down), zw: click
+uniform vec4      iDate;                 // (year, month, day, time in seconds)
+uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
+%s
+
+%s
+
+void main()
+{
+	mainImage(gl_FragColor, gl_FragCoord.xy);
+}
+
+"""
+
+IDENTITY_VERTEX_SHADER = """#version 120
+
+attribute vec2 position;
+void main()
+{
+	gl_Position = vec4(position, 0.0, 1.0);
+}
+"""
+
+TEXTURE_VERTEX_SHADER = """#version 120
+
+attribute vec2 position;
+varying vec2 texcoord;
+void main()
+{
+	gl_Position = vec4(position, 0.0, 1.0);
+	texcoord = position * vec2(0.5, -0.5) + vec2(0.5);
+}"""
+
+TEXTURE_FRAGMENT_SHADER = """#version 120
+
+varying vec2 texcoord;
+uniform sampler2D texture;
+void main()
+{
+	gl_FragColor = texture2D(texture, texcoord);
+}
+"""
+
+
 def compile_shader(shader):
 	gl.glCompileShader(shader)
 	if not gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS):
@@ -50,13 +102,15 @@ def make_shader(source):
 class RenderPass(object):
 	def __init__(self, renderer, pass_definition):
 		self.renderer = renderer
-		self.code = pass_definition['code']
 		self.outputs = pass_definition['outputs']
 		self.inputs = pass_definition['inputs']
 		self.name = pass_definition['name']
 		self.type = pass_definition['type']
 		if len(self.outputs) != 1:
 			raise NotImplementedError("Pass with %d outputs not implemented" % len(outputs))
+		self.code = pass_definition['code']
+		if self.code.startswith('file://'):
+			self.__load_code_from_file(self.code[len('file://'):])
 		self.shader = self.make_shader()
 
 	@staticmethod
@@ -67,7 +121,7 @@ class RenderPass(object):
 			raise NotImplementedError("Shader pass %s not implemented" % pass_definition['type'])
 
 	def make_shader(self):
-		shader = make_shader({'vertex': self.vertex_shader_code, 'fragment': self.get_fragment_shader()})
+		shader = make_shader({'vertex': self.get_vertex_shader(), 'fragment': self.get_fragment_shader()})
 		gl.glUseProgram(shader['program'])
 
 		stride = self.renderer.vertex_surface.strides[0]
@@ -85,53 +139,22 @@ class RenderPass(object):
 	def render(self):
 		raise NotImplementedError()
 
+	def get_vertex_shader(self):
+		if hasattr(self, 'vertex_shader_code'):
+			return self.vertex_shader_code
+		else:
+			return IDENTITY_VERTEX_SHADER
+
 	def get_fragment_shader(self):
 		# samplerCube
 		i_channels = ['sampler2D'] * 4
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 
-		return """#version 120
-
-uniform vec3      iResolution;           // viewport resolution (in pixels)
-uniform float     iTime;                 // shader playback time (in seconds)
-uniform float     iTimeDelta;            // render time (in seconds)
-uniform int       iFrame;                // shader playback frame
-uniform float     iChannelTime[4];       // channel playback time (in seconds)
-uniform vec3      iChannelResolution[4]; // channel resolution (in pixels)
-uniform vec4      iMouse;                // mouse pixel coords. xy: current (if MLB down), zw: click
-uniform vec4      iDate;                 // (year, month, day, time in seconds)
-uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
-%s
-
-%s
-
-void main()
-{
-	mainImage(gl_FragColor, gl_FragCoord.xy);
-}
-
-""" % (sampler_code, self.code)
+		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
 
 
 
 class ImageRenderPass(RenderPass):
-	vertex_shader_code = """#version 120
-
-attribute vec2 position;
-varying vec4 texcoord;
-void main()
-{
-	gl_Position = vec4(position, 0.0, 1.0);
-	texcoord = vec4(position, 0.0, 1.0);
-}"""
-	fragment_shader_code = """#version 120
-varying vec4 texcoord;
-
-void main()
-{
-	gl_FragColor = texcoord;
-}"""
-
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		self.framebuffer = gl.glGenFramebuffers(1)
@@ -151,31 +174,13 @@ void main()
 
 
 class Renderer(object):
-	vertex_shader_code = """#version 120
-
-attribute vec2 position;
-varying vec2 texcoord;
-void main()
-{
-	gl_Position = vec4(position, 0.0, 1.0);
-	texcoord = position * vec2(0.5, -0.5) + vec2(0.5);
-}"""
-	fragment_shader_code = """#version 120
-
-varying vec2 texcoord;
-uniform sampler2D texture;
-void main()
-{
-	gl_FragColor = texture2D(texture, texcoord);
-}"""
-
 	def __init__(self, shader_definition, resolution=None):
 		self.vertex_surface = np.array([(-1,+1), (+1,+1), (-1,-1), (+1,-1)], np.float32)
 		self.vertex_surface_buffer = gl.glGenBuffers(1)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface.nbytes, self.vertex_surface, gl.GL_DYNAMIC_DRAW)
 
-		self.shader = make_shader({'vertex': self.vertex_shader_code, 'fragment': self.fragment_shader_code})
+		self.shader = make_shader({'vertex': TEXTURE_VERTEX_SHADER, 'fragment': TEXTURE_FRAGMENT_SHADER})
 
 		gl.glUseProgram(self.shader['program'])
 		stride = self.vertex_surface.strides[0]

@@ -4,6 +4,7 @@ import ctypes
 import json
 import os
 import sys
+import time
 
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
@@ -152,6 +153,15 @@ class RenderPass(object):
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
 
+	def update_inputs(self, inputs):
+		gl.glUseProgram(self.shader['program'])
+		for key, val in inputs.items():
+			if key == 'time':
+				loc = gl.glGetUniformLocation(self.shader['program'], "iTime")
+				gl.glUniform1f(loc, val)
+			else:
+				raise RuntimeError("Unknown input: %s" % key)
+
 	def __load_code_from_file(self, filename):
 		shader_dirname = os.path.dirname(self.renderer.shader_filename)
 		filename = os.path.abspath(os.path.join(shader_dirname, filename))
@@ -198,6 +208,7 @@ class Renderer(object):
 		self.resolution = args.resolution
 		self.render_passes = []
 		self.output = None
+		self.start_time = time.monotonic()
 		for render_pass_definition in shader_definition['renderpass']:
 			render_pass = RenderPass.create(self, render_pass_definition)
 			if render_pass.type == 'image':
@@ -209,12 +220,7 @@ class Renderer(object):
 		self.frame = 0
 
 	def display(self):
-		self.frame += 1
-		sys.stdout.write(f'\r{self.frame}')
-		sys.stdout.flush()
-
-		for render_pass in self.render_passes:
-			render_pass.render()
+		self.render_frame()
 
 		gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 		gl.glUseProgram(self.shader['program'])
@@ -234,6 +240,17 @@ class Renderer(object):
 	def keyboard(self, key, x, y):
 		if key == b'\x1b':
 			sys.exit()
+
+	def render_frame(self):
+		self.frame += 1
+		sys.stdout.write(f'\r{self.frame}')
+		sys.stdout.flush()
+
+		for render_pass in self.render_passes:
+			render_pass.update_inputs({
+				'time': time.monotonic() - self.start_time,
+			})
+			render_pass.render()
 
 
 def parse_resolution(val):

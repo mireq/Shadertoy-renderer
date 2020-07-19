@@ -149,9 +149,13 @@ class RenderPass(object):
 		# samplerCube
 		i_channels = ['sampler2D'] * 4
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
-
 		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
 
+	def __load_code_from_file(self, filename):
+		shader_dirname = os.path.dirname(self.renderer.shader_filename)
+		filename = os.path.abspath(os.path.join(shader_dirname, filename))
+		with open(filename, 'r') as fp:
+			self.code = fp.read()
 
 
 class ImageRenderPass(RenderPass):
@@ -174,7 +178,7 @@ class ImageRenderPass(RenderPass):
 
 
 class Renderer(object):
-	def __init__(self, shader_definition, resolution=None):
+	def __init__(self, shader_definition, args):
 		self.vertex_surface = np.array([(-1,+1), (+1,+1), (-1,-1), (+1,-1)], np.float32)
 		self.vertex_surface_buffer = gl.glGenBuffers(1)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
@@ -190,7 +194,8 @@ class Renderer(object):
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glVertexAttribPointer(loc, 2, gl.GL_FLOAT, False, stride, offset)
 
-		self.resolution = resolution or (512, 512)
+		self.shader_filename = args.file.name
+		self.resolution = args.resolution
 		self.render_passes = []
 		self.output = None
 		for render_pass_definition in shader_definition['renderpass']:
@@ -257,7 +262,7 @@ def main():
 	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
 	glut.glutCreateWindow("Shadertoy")
 
-	renderer = Renderer(json.load(args.file), args.resolution)
+	renderer = Renderer(json.load(args.file), args)
 	glut.glutDisplayFunc(renderer.display)
 	glut.glutReshapeFunc(renderer.reshape)
 	glut.glutKeyboardFunc(renderer.keyboard)

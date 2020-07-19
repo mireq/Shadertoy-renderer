@@ -35,6 +35,7 @@ void main()
 IDENTITY_VERTEX_SHADER = """#version 120
 
 attribute vec2 position;
+
 void main()
 {
 	gl_Position = vec4(position, 0.0, 1.0);
@@ -48,7 +49,7 @@ varying vec2 texcoord;
 void main()
 {
 	gl_Position = vec4(position, 0.0, 1.0);
-	texcoord = position * vec2(0.5, -0.5) + vec2(0.5);
+	texcoord = position * vec2(0.5, 0.5) + vec2(0.5);
 }"""
 
 TEXTURE_FRAGMENT_SHADER = """#version 120
@@ -171,7 +172,6 @@ class ImageRenderPass(RenderPass):
 	def render(self):
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.image, 0);
-		gl.glViewport(0, 0, *self.renderer.resolution)
 		gl.glUseProgram(self.shader['program'])
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
@@ -228,7 +228,7 @@ class Renderer(object):
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 		glut.glutSwapBuffers()
 
-	def reshape(self, width=0, height=0):
+	def reshape(self, width, height):
 		gl.glViewport(0, 0, width, height)
 
 	def keyboard(self, key, x, y):

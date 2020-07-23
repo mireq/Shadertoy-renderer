@@ -73,41 +73,57 @@ void main()
 FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow {output}'
 
 
-def compile_shader(shader):
-	gl.glCompileShader(shader)
-	if not gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS):
-		error = gl.glGetShaderInfoLog(shader).decode()
-		raise RuntimeError("Shader not compiled: %s" % error)
+def to_local_filename(filename, base=None):
+	if os.path.isabs(filename):
+		return filename
+	if base is None:
+		base = __file__
+	return os.path.abspath(os.path.join(os.path.dirname(base), filename))
 
 
-def link_shader(program):
-	gl.glLinkProgram(program)
-	if not gl.glGetProgramiv(program, gl.GL_LINK_STATUS):
-		error = gl.glGetProgramInfoLog(program).decode()
-		raise RuntimeError("Shader not linked: %s" % error)
+class Shader(object):
+	def __init__(self, vertex, fragment, base=None):
+		self.__base = base
+		f_prefix = 'file://'
+		if vertex.startswith(f_prefix):
+			vertex = self.__load_code_from_file(vertex[len(f_prefix):])
+		if fragment.startswith(f_prefix):
+			fragment = self.__load_code_from_file(fragment[len(f_prefix):])
+		self.program = gl.glCreateProgram()
+		vertex_shader = gl.glCreateShader(gl.GL_VERTEX_SHADER)
+		fragment_shader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
+		self.__compile_shader(vertex_shader, vertex)
+		self.__compile_shader(fragment_shader, fragment)
+		self.__link_shader()
+		gl.glDetachShader(self.program, vertex_shader)
+		gl.glDetachShader(self.program, fragment_shader)
 
+	def use(self):
+		gl.glUseProgram(self.program)
 
-def make_shader(source):
-	shader = {'program': gl.glCreateProgram()}
-	shader = {
-		'program': gl.glCreateProgram(),
-	}
-	if 'vertex' in source:
-		shader['vertex'] = gl.glCreateShader(gl.GL_VERTEX_SHADER)
-		gl.glShaderSource(shader['vertex'], source['vertex'])
-		compile_shader(shader['vertex'])
-		gl.glAttachShader(shader['program'], shader['vertex'])
-	if 'fragment' in source:
-		shader['fragment'] = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
-		gl.glShaderSource(shader['fragment'], source['fragment'])
-		compile_shader(shader['fragment'])
-		gl.glAttachShader(shader['program'], shader['fragment'])
-	link_shader(shader['program'])
-	if 'vertex' in source:
-		gl.glDetachShader(shader['program'], shader['vertex'])
-	if 'fragment' in source:
-		gl.glDetachShader(shader['program'], shader['fragment'])
-	return shader
+	def get_attribute(self, name):
+		return gl.glGetAttribLocation(self.program, name)
+
+	def get_uniform(self, name):
+		return gl.glGetUniformLocation(self.program, name)
+
+	def __load_code_from_file(self, filename):
+		with open(to_local_filename(filename, self.__base), 'r') as fp:
+			self.code = fp.read()
+
+	def __compile_shader(self, shader, code):
+		gl.glShaderSource(shader, code)
+		gl.glCompileShader(shader)
+		if not gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS):
+			error = gl.glGetShaderInfoLog(shader).decode()
+			raise RuntimeError("Shader not compiled: %s" % error)
+		gl.glAttachShader(self.program, shader)
+
+	def __link_shader(self):
+		gl.glLinkProgram(self.program)
+		if not gl.glGetProgramiv(self.program, gl.GL_LINK_STATUS):
+			error = gl.glGetProgramInfoLog(self.program).decode()
+			raise RuntimeError("Shader not linked: %s" % error)
 
 
 class FrameRateControllerResult(object):
@@ -149,6 +165,7 @@ class RenderPass(object):
 		self.type = pass_definition['type']
 		if len(self.outputs) != 1:
 			raise NotImplementedError("Pass with %d outputs not implemented" % len(outputs))
+		self.output_id = self.outputs[0]['id']
 		self.code = pass_definition['code']
 		if self.code.startswith('file://'):
 			self.__load_code_from_file(self.code[len('file://'):])
@@ -162,18 +179,16 @@ class RenderPass(object):
 			raise NotImplementedError("Shader pass %s not implemented" % pass_definition['type'])
 
 	def make_shader(self):
-		shader = make_shader({'vertex': self.get_vertex_shader(), 'fragment': self.get_fragment_shader()})
-		gl.glUseProgram(shader['program'])
+		shader = Shader(self.get_vertex_shader(), self.get_fragment_shader())
+		shader.use()
 
 		stride = self.renderer.vertex_surface.strides[0]
 		offset = ctypes.c_void_p(0)
-		loc = gl.glGetAttribLocation(shader['program'], "position")
-		gl.glEnableVertexAttribArray(loc)
+		gl.glEnableVertexAttribArray(shader.get_attribute("position"))
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
-		gl.glVertexAttribPointer(loc, 2, gl.GL_FLOAT, False, stride, offset)
+		gl.glVertexAttribPointer(shader.get_attribute("position"), 2, gl.GL_FLOAT, False, stride, offset)
 
-		loc = gl.glGetUniformLocation(shader['program'], "iResolution")
-		gl.glUniform3f(loc, float(self.renderer.resolution[0]), float(self.renderer.resolution[1]), float(0))
+		gl.glUniform3f(shader.get_uniform("iResolution"), float(self.renderer.resolution[0]), float(self.renderer.resolution[1]), float(0))
 
 		return shader
 
@@ -193,11 +208,10 @@ class RenderPass(object):
 		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
 
 	def update_inputs(self, inputs):
-		gl.glUseProgram(self.shader['program'])
+		self.shader.use()
 		for key, val in inputs.items():
 			if key == 'time':
-				loc = gl.glGetUniformLocation(self.shader['program'], "iTime")
-				gl.glUniform1f(loc, val)
+				gl.glUniform1f(self.shader.get_uniform("iTime"), val)
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
@@ -248,16 +262,15 @@ class ImageRenderPass(RenderPass):
 		self.tile_framebuffer = tile_framebuffer
 
 	def render(self):
-		gl.glUseProgram(self.shader['program'])
+		self.shader.use()
 
-		offsetLoc = gl.glGetUniformLocation(self.shader['program'], "iTileOffset")
 		if len(self.renderer.tiles) == 1 and not self.renderer.multisample:
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 		else:
 			for tile in self.renderer.tiles:
-				gl.glUniform2f(offsetLoc, float(tile[0]), float(tile[1]))
+				gl.glUniform2f(self.shader.get_uniform("iTileOffset"), float(tile[0]), float(tile[1]))
 
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer);
 				gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
@@ -279,15 +292,14 @@ class Renderer(object):
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface.nbytes, self.vertex_surface, gl.GL_DYNAMIC_DRAW)
 
-		self.shader = make_shader({'vertex': TEXTURE_VERTEX_SHADER, 'fragment': TEXTURE_FRAGMENT_SHADER})
+		self.shader = Shader(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER)
 
-		gl.glUseProgram(self.shader['program'])
+		self.shader.use()
 		stride = self.vertex_surface.strides[0]
 		offset = ctypes.c_void_p(0)
-		loc = gl.glGetAttribLocation(self.shader['program'], "position")
-		gl.glEnableVertexAttribArray(loc)
+		gl.glEnableVertexAttribArray(self.shader.get_attribute("position"))
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
-		gl.glVertexAttribPointer(loc, 2, gl.GL_FLOAT, False, stride, offset)
+		gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, stride, offset)
 
 		self.shader_filename = args.file.name
 		self.resolution = args.resolution
@@ -319,11 +331,13 @@ class Renderer(object):
 		self.ffmpeg = None
 		self.ffmpeg_feed = None
 		self.start_time = time.monotonic()
+
 		for render_pass_definition in shader_definition['renderpass']:
 			render_pass = RenderPass.create(self, render_pass_definition)
 			if render_pass.type == 'image':
 				self.output = render_pass
 			self.render_passes.append(render_pass)
+
 		if self.output is None:
 			raise RuntimeError("Output is not defined")
 
@@ -345,13 +359,12 @@ class Renderer(object):
 	def render_display(self):
 		gl.glViewport(0, 0, glut.glutGet(glut.GLUT_WINDOW_WIDTH), glut.glutGet(glut.GLUT_WINDOW_HEIGHT))
 		gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-		gl.glUseProgram(self.shader['program'])
+		self.shader.use()
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 
 		gl.glActiveTexture(gl.GL_TEXTURE0);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.output.image);
-		loc = gl.glGetUniformLocation(self.shader['program'], "texture")
-		gl.glUniform1i(loc, 0)
+		gl.glUniform1i(self.shader.get_uniform("texture"), 0)
 
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 		gl.glFinish()

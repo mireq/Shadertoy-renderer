@@ -215,7 +215,7 @@ class RenderPass(object):
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
-	def make_framebuffer(self, multisample=False):
+	def make_framebuffer(self):
 		image = gl.glGenTextures(1)
 		framebuffer = gl.glGenFramebuffers(1)
 		tile_image = gl.glGenTextures(1)
@@ -231,18 +231,12 @@ class RenderPass(object):
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer);
-		if multisample:
-			gl.glBindTexture(gl.GL_TEXTURE_2D_MULTISAMPLE, tile_image);
-			gl.glTexImage2DMultisample(gl.GL_TEXTURE_2D_MULTISAMPLE, 4, gl.GL_RGBA8, self.renderer.tile_size[0], self.renderer.tile_size[1], gl.GL_FALSE)
-			gl.glBindTexture(gl.GL_TEXTURE_2D_MULTISAMPLE, 0);
-			gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D_MULTISAMPLE, tile_image, 0);
-		else:
-			gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
-			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.tile_size[0], self.renderer.tile_size[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
-			gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
-			gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.tile_size[0], self.renderer.tile_size[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
 		return image, framebuffer, tile_image, tile_framebuffer
 
 	def __load_code_from_file(self, filename):
@@ -255,7 +249,7 @@ class RenderPass(object):
 class ImageRenderPass(RenderPass):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-		framebuffer, image, tile_image, tile_framebuffer = self.make_framebuffer(multisample=self.renderer.multisample)
+		framebuffer, image, tile_image, tile_framebuffer = self.make_framebuffer()
 		self.framebuffer = framebuffer
 		self.image = image
 		self.tile_image = tile_image
@@ -264,7 +258,7 @@ class ImageRenderPass(RenderPass):
 	def render(self):
 		self.shader.use()
 
-		if len(self.renderer.tiles) == 1 and not self.renderer.multisample:
+		if len(self.renderer.tiles) == 1:
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
@@ -325,7 +319,6 @@ class Renderer(object):
 		if args.render_video:
 			self.video_framerate_controller = FrameRateController(self.fps, self.render_video_fps)
 		self.tiles = self.__calc_tiles()
-		self.multisample = args.multisample
 		self.render_passes = []
 		self.output = None
 		self.ffmpeg = None
@@ -476,7 +469,6 @@ def main():
 	parser.add_argument('file', type=argparse.FileType('r'), help="Shader file")
 	parser.add_argument('--resolution', type=parse_resolution, default=(480, 270), help="Resolution")
 	parser.add_argument('--tile-size', type=parse_resolution, help="Tile size")
-	parser.add_argument('--multisample', action='store_true', help="Multisampling")
 	parser.add_argument('--fps', type=int, help="Render frame rate")
 	parser.add_argument('--render-video', help="Path to rendered video file")
 	parser.add_argument('--render-video-fps', type=int, help="Video frame rate")

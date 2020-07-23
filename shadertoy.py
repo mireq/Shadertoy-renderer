@@ -221,29 +221,25 @@ class RenderPass(object):
 		tile_image = gl.glGenTextures(1)
 		tile_framebuffer = gl.glGenFramebuffers(1)
 
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
 		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.resolution[0], self.renderer.resolution[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
-
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
 		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.tile_size[0], self.renderer.tile_size[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
-		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
-		return image, framebuffer, tile_image, tile_framebuffer
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
 
-	def __load_code_from_file(self, filename):
-		shader_dirname = os.path.dirname(self.renderer.shader_filename)
-		filename = os.path.abspath(os.path.join(shader_dirname, filename))
-		with open(filename, 'r') as fp:
-			self.code = fp.read()
+		return image, framebuffer, tile_image, tile_framebuffer
 
 
 class ImageRenderPass(RenderPass):

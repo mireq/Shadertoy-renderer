@@ -81,6 +81,11 @@ def to_local_filename(filename, base=None):
 	return os.path.abspath(os.path.join(os.path.dirname(base), filename))
 
 
+def load_from_file(filename, base=None, binary=True):
+	with open(to_local_filename(filename, base), 'r' + ('b' if binary else '')) as fp:
+		return fp.read()
+
+
 class Shader(object):
 	def __init__(self, vertex, fragment, base=None):
 		self.__base = base
@@ -106,10 +111,6 @@ class Shader(object):
 
 	def get_uniform(self, name):
 		return gl.glGetUniformLocation(self.program, name)
-
-	def __load_code_from_file(self, filename):
-		with open(to_local_filename(filename, self.__base), 'r') as fp:
-			self.code = fp.read()
 
 	def __compile_shader(self, shader, code):
 		gl.glShaderSource(shader, code)
@@ -168,7 +169,7 @@ class RenderPass(object):
 		self.output_id = self.outputs[0]['id']
 		self.code = pass_definition['code']
 		if self.code.startswith('file://'):
-			self.__load_code_from_file(self.code[len('file://'):])
+			self.code = load_from_file(self.code[len('file://'):], self.renderer.shader_filename, binary=False)
 		self.shader = self.make_shader()
 
 	@staticmethod
@@ -215,7 +216,7 @@ class RenderPass(object):
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
-	def make_framebuffer(self):
+	def make_tile_framebuffer(self):
 		image = gl.glGenTextures(1)
 		framebuffer = gl.glGenFramebuffers(1)
 		tile_image = gl.glGenTextures(1)
@@ -245,7 +246,7 @@ class RenderPass(object):
 class ImageRenderPass(RenderPass):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-		framebuffer, image, tile_image, tile_framebuffer = self.make_framebuffer()
+		framebuffer, image, tile_image, tile_framebuffer = self.make_tile_framebuffer()
 		self.framebuffer = framebuffer
 		self.image = image
 		self.tile_image = tile_image
@@ -254,25 +255,22 @@ class ImageRenderPass(RenderPass):
 	def render(self):
 		self.shader.use()
 
-		if len(self.renderer.tiles) == 1:
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
+		tiling = len(self.renderer.tiles) > 1
+		for tile in self.renderer.tiles:
+			gl.glUniform2f(self.shader.get_uniform("iTileOffset"), float(tile[0]), float(tile[1]))
+
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer);
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
-		else:
-			for tile in self.renderer.tiles:
-				gl.glUniform2f(self.shader.get_uniform("iTileOffset"), float(tile[0]), float(tile[1]))
 
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer);
-				gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
-
+			if tiling:
 				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.tile_framebuffer)
 				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, self.framebuffer)
 				gl.glBlitFramebuffer(0, 0, tile[2] - tile[0], tile[3] - tile[1], tile[0], tile[1], tile[2], tile[3], gl.GL_COLOR_BUFFER_BIT, gl.GL_LINEAR)
 				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
 				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
 
-				gl.glFinish()
+			gl.glFinish()
 
 
 class Renderer(object):

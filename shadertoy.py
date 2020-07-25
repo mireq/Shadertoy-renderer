@@ -252,6 +252,11 @@ class Input(object):
 		self.id = input_definition.get('id')
 		self.channel = input_definition.get('channel')
 		self.filepath = input_definition.get('filepath')
+		self.filter = gl.GL_NEAREST
+		if input_definition['sampler']['filter'] == 'mipmap':
+			self.filter = gl.GL_LINEAR_MIPMAP_LINEAR
+		elif input_definition['sampler']['filter'] == 'linear':
+			self.filter = gl.GL_LINEAR
 
 	@staticmethod
 	def create(renderer, input_definition):
@@ -283,8 +288,10 @@ class TextureInput(Input):
 				frame = src.get_frame()
 				if src.width != 0 and src.height != 0:
 					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR else self.filter)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, self.filter)
+			if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
+				gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
 	def get_texture(self):

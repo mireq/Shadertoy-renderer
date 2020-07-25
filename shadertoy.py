@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import shlex
+import statistics
 import subprocess
 import sys
 import time
@@ -77,6 +78,8 @@ FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
 FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow {output} -loglevel error'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
+
+FRAME_DURATION_AVERAGE = 60
 
 
 def to_local_filename(filename, base=None):
@@ -315,6 +318,10 @@ class RenderPass(object):
 		for key, val in inputs.items():
 			if key == 'time':
 				gl.glUniform1f(self.shader.get_uniform("iTime"), val)
+			elif key == 'time_delta':
+				gl.glUniform1f(self.shader.get_uniform("iTimeDelta"), val)
+			elif key == 'frame':
+				gl.glUniform1f(self.shader.get_uniform("iFrame"), val)
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
@@ -380,7 +387,8 @@ class ImageRenderPass(RenderPass):
 				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
 				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
 
-			gl.glFinish()
+			if not self.renderer.options.benchmark:
+				gl.glFinish()
 
 	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.image)
@@ -395,6 +403,7 @@ class RendererOptions(object):
 		parser.add_argument('--fps', type=int, help="Render frame rate")
 		parser.add_argument('--render-video', help="Path to rendered video file")
 		parser.add_argument('--render-video-fps', type=int, help="Video frame rate")
+		parser.add_argument('--benchmark', action='store_true', help="Benchmark")
 		args = parser.parse_args()
 
 		self.file = args.file
@@ -409,7 +418,8 @@ class RendererOptions(object):
 		self.fps = args.fps
 		self.render_video = args.render_video
 		self.render_video_fps = args.render_video_fps
-		if args.render_video and self.fps is None:
+		self.benchmark = args.benchmark
+		if (args.render_video or self.benchmark) and self.fps is None:
 			self.fps = 60
 		if args.render_video and self.render_video_fps is None:
 			self.render_video_fps = self.fps
@@ -448,6 +458,9 @@ class Renderer(object):
 		self.ffmpeg = None
 		self.ffmpeg_feed = None
 		self.start_time = time.monotonic()
+		self.current_time = self.start_time
+		self.last_time = self.start_time
+		self.frame_durations = []
 
 		for render_pass_definition in shader_definition['renderpass']:
 			render_pass = RenderPass.create(self, render_pass_definition)
@@ -504,18 +517,39 @@ class Renderer(object):
 
 	def render_frame(self):
 		inputs = {}
-		if self.options.fps is None:
-			inputs['time'] = time.monotonic() - self.start_time
-		else:
+		if self.options.render_video is not None or self.options.benchmark:
 			inputs['time'] = self.frame / self.options.fps
+			inputs['time_delta'] = 1.0 / self.options.fps
+		else:
+			inputs['time'] = self.current_time - self.start_time
+			inputs['time_delta'] = self.current_time - self.last_time
+		inputs['frame'] = self.frame
 
 		for render_pass in self.render_passes:
 			render_pass.update_parameters(inputs)
+
+		frame_start = time.monotonic()
+		for render_pass in self.render_passes:
 			render_pass.render()
+		gl.glFinish()
+		frame_end = time.monotonic()
+		self.frame_durations = self.frame_durations[:FRAME_DURATION_AVERAGE-1] + [frame_end - frame_start]
+
+		fps = 1.0 / statistics.mean(self.frame_durations)
+		fps_text = f'{fps:8.8}'
+		hour = inputs['time'] // 3600
+		minute = (inputs['time'] - hour * 3600) // 60
+		second = (inputs['time'] - hour * 3600 - minute * 60)
+		hour = '%d' % hour
+		minute = '%02d' % minute
+		second = '%02.2f' % second
+
+		sys.stdout.write(f"\x1b[2K\rf: {self.frame:<5} fps: {fps_text:<10} time: {hour}:{minute}:{second}")
+		sys.stdout.flush()
 
 		self.frame += 1
-		#sys.stdout.write("\r%d" % self.frame)
-		#sys.stdout.flush()
+		self.last_time = self.current_time
+		self.current_time = time.monotonic()
 
 	def write_video(self):
 		if not self.options.render_video:

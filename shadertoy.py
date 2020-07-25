@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import argparse
 import collections
+import contextlib
 import ctypes
+import enum
 import json
 import logging
 import os
@@ -71,7 +73,10 @@ void main()
 }
 """
 
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow {output}'
+FFPROBE_BINARY = 'ffprobe'
+FFMPEG_BINARY = 'ffmpeg'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow {output} -loglevel error'
+FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 
 
 def to_local_filename(filename, base=None):
@@ -85,6 +90,50 @@ def to_local_filename(filename, base=None):
 def load_from_file(filename, base=None, binary=True):
 	with open(to_local_filename(filename, base), 'r' + ('b' if binary else '')) as fp:
 		return fp.read()
+
+
+def build_shell_command(cmd, replacements):
+	replacements = {'{'+key+'}': val for key, val in replacements.items()}
+	params = shlex.split(cmd)
+	return [replacements.get(param, param) for param in params]
+
+
+@contextlib.contextmanager
+def open_asset(path, base=None):
+	if path.startswith('file://'):
+		path = to_local_filename(path[len('file://'):], base)
+		fp = open(path, 'rb')
+		try:
+			yield fp
+		finally:
+			fp.close()
+	else:
+		raise NotImplementedError()
+
+
+class MediaSourceType(enum.Enum):
+	image = 1
+	audio = 2
+
+
+class MediaSource(object):
+	def __init__(self, fp, media_type=MediaSourceType.image):
+		self.fp = fp
+		self.fp.seek(0)
+		self.__stream_info = None
+		replacements = {
+			'ffprobe': FFPROBE_BINARY,
+			'input': '-',
+		}
+		cmd = build_shell_command(FFPROBE_CMDLINE, replacements)
+		self.__metadata = json.loads(subprocess.check_output(cmd, input=fp.read()))
+		for stream in self.__metadata['streams']:
+			if media_type == MediaSourceType.image and stream['codec_type'] == 'video':
+				self.__stream_info = stream
+				break
+			elif media_type == MediaSourceType.audio and stream['codec_type'] == 'audio':
+				self.__stream_info = stream
+				break
 
 
 class Shader(object):
@@ -162,19 +211,54 @@ Texture = collections.namedtuple('Texture', ['texture_type', 'texture_name'])
 
 
 class Input(object):
-	def __init__(self, renderer):
+	def __init__(self, renderer, input_definition):
 		self.renderer = renderer
+		self.id = input_definition.get('id')
+		self.channel = input_definition.get('channel')
+		self.filepath = input_definition.get('filepath')
+
+	@staticmethod
+	def create(renderer, input_definition):
+		if input_definition['type'] == 'texture':
+			return TextureInput(renderer, input_definition)
+		else:
+			raise NotImplementedError("Input type not implemented" % input_definition['type'])
 
 	def get_texture(self):
 		raise NotImplementedError()
 
-	def render(self):
-		raise NotImplementedError()
+	def load_texture(self):
+		pass
 
 
-class RenderPass(Input):
+class TextureInput(Input):
+	def __init__(self, renderer, input_definition):
+		super().__init__(renderer, input_definition)
+		self.texture = None
+
+	def load_texture(self):
+		if self.texture is None:
+			self.texture = gl.glGenTextures(1)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+			with open_asset(self.filepath, self.renderer.shader_filename) as fp:
+				texture = fp.read()
+				fp.seek(0)
+				src = MediaSource(fp)
+
+				gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, 200, 200, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, texture)
+				print(self.renderer.frame)
+				print(len(texture))
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+	def get_texture(self):
+		return (gl.GL_TEXTURE_2D, self.texture)
+
+
+class RenderPass(object):
 	def __init__(self, renderer, pass_definition):
-		super().__init__(renderer)
+		self.renderer = renderer
 		self.outputs = pass_definition['outputs']
 		self.inputs = []
 		self.name = pass_definition['name']
@@ -186,6 +270,12 @@ class RenderPass(Input):
 		if self.code.startswith('file://'):
 			self.code = load_from_file(self.code[len('file://'):], self.renderer.shader_filename, binary=False)
 		self.shader = self.make_shader()
+
+	def get_texture(self):
+		raise NotImplementedError()
+
+	def render(self):
+		raise NotImplementedError()
 
 	@staticmethod
 	def create(renderer, pass_definition):
@@ -220,7 +310,7 @@ class RenderPass(Input):
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
 
-	def update_inputs(self, inputs):
+	def update_parameters(self, inputs):
 		self.shader.use()
 		for key, val in inputs.items():
 			if key == 'time':
@@ -254,6 +344,13 @@ class RenderPass(Input):
 
 		return image, framebuffer, tile_image, tile_framebuffer
 
+	def bind_inputs(self):
+		for input_channel in self.inputs:
+			input_channel.load_texture()
+			gl.glActiveTexture(gl.GL_TEXTURE0 + input_channel.channel + 1);
+			gl.glBindTexture(*input_channel.get_texture());
+			gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), input_channel.channel + 1)
+
 
 class ImageRenderPass(RenderPass):
 	def __init__(self, *args, **kwargs):
@@ -265,6 +362,7 @@ class ImageRenderPass(RenderPass):
 		self.tile_framebuffer = tile_framebuffer
 
 	def render(self):
+		self.bind_inputs()
 		self.shader.use()
 
 		tiling = len(self.renderer.tiles) > 1
@@ -344,7 +442,8 @@ class Renderer(object):
 			raise RuntimeError("Output is not defined")
 
 		for render_pass, render_pass_definition in zip(self.render_passes, shader_definition['renderpass']):
-			inputs = []
+			inputs = [Input.create(self, input_definition) for input_definition in render_pass_definition['inputs']]
+			render_pass.inputs = inputs
 
 		self.frame = 0
 
@@ -394,7 +493,7 @@ class Renderer(object):
 			inputs['time'] = self.frame / self.fps
 
 		for render_pass in self.render_passes:
-			render_pass.update_inputs(inputs)
+			render_pass.update_parameters(inputs)
 			render_pass.render()
 
 		self.frame += 1
@@ -449,16 +548,14 @@ class Renderer(object):
 	def __init_video_output(self):
 		self.ffmpeg_feed = False
 		replacements = {
-			'ffmpeg': 'ffmpeg',
+			'ffmpeg': FFMPEG_BINARY,
 			'resolution': f'{self.resolution[0]}x{self.resolution[1]}',
 			'input': '-',
 			'framerate': str(self.render_video_fps),
 			'output': self.render_video,
 		}
-		replacements = {'{'+key+'}': val for key, val in replacements.items()}
-		params = shlex.split(FFMPEG_CMDLINE)
-		params = [replacements.get(param, param) for param in params]
-		self.ffmpeg = subprocess.Popen(params, stdin=subprocess.PIPE)
+		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
+		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
 		self.ffmpeg_feed = self.ffmpeg.stdin
 
 

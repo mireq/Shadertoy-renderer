@@ -240,7 +240,7 @@ class TextureInput(Input):
 		if self.texture is None:
 			self.texture = gl.glGenTextures(1)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
-			with open_asset(self.filepath, self.renderer.shader_filename) as fp:
+			with open_asset(self.filepath, self.renderer.options.shader_filename) as fp:
 				texture = fp.read()
 				fp.seek(0)
 				src = MediaSource(fp)
@@ -268,7 +268,7 @@ class RenderPass(object):
 		self.output_id = self.outputs[0]['id']
 		self.code = pass_definition['code']
 		if self.code.startswith('file://'):
-			self.code = load_from_file(self.code[len('file://'):], self.renderer.shader_filename, binary=False)
+			self.code = load_from_file(self.code[len('file://'):], self.renderer.options.shader_filename, binary=False)
 		self.shader = self.make_shader()
 
 	def get_texture(self):
@@ -294,7 +294,7 @@ class RenderPass(object):
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
 		gl.glVertexAttribPointer(shader.get_attribute("position"), 2, gl.GL_FLOAT, False, stride, offset)
 
-		gl.glUniform3f(shader.get_uniform("iResolution"), float(self.renderer.resolution[0]), float(self.renderer.resolution[1]), float(0))
+		gl.glUniform3f(shader.get_uniform("iResolution"), float(self.renderer.options.w), float(self.renderer.options.h), float(0))
 
 		return shader
 
@@ -326,7 +326,7 @@ class RenderPass(object):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.resolution[0], self.renderer.resolution[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
@@ -335,7 +335,7 @@ class RenderPass(object):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.tile_size[0], self.renderer.tile_size[1], 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.options.tile_w, self.renderer.options.tile_h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
@@ -386,8 +386,38 @@ class ImageRenderPass(RenderPass):
 		return Texture(gl.GL_TEXTURE_2D, self.image)
 
 
+class RendererOptions(object):
+	def __init__(self):
+		parser = argparse.ArgumentParser(description="Shadertoy renderer")
+		parser.add_argument('file', type=argparse.FileType('r'), help="Shader file")
+		parser.add_argument('--resolution', type=parse_resolution, default=(480, 270), help="Resolution")
+		parser.add_argument('--tile-size', type=parse_resolution, help="Tile size")
+		parser.add_argument('--fps', type=int, help="Render frame rate")
+		parser.add_argument('--render-video', help="Path to rendered video file")
+		parser.add_argument('--render-video-fps', type=int, help="Video frame rate")
+		args = parser.parse_args()
+
+		self.file = args.file
+		self.shader_filename = args.file.name
+		self.resolution = args.resolution
+		self.w, self.h = self.resolution
+		self.pixels_count = self.w * self.h
+		self.tile_size = self.resolution
+		if args.tile_size:
+			self.tile_size = args.tile_size
+		self.tile_w, self.tile_h = self.tile_size
+		self.fps = args.fps
+		self.render_video = args.render_video
+		self.render_video_fps = args.render_video_fps
+		if args.render_video and self.fps is None:
+			self.fps = 60
+		if args.render_video and self.render_video_fps is None:
+			self.render_video_fps = self.fps
+
+
 class Renderer(object):
-	def __init__(self, shader_definition, args):
+	def __init__(self, shader_definition, options):
+		self.options = options
 		self.vertex_surface = np.array([(-1,+1), (+1,+1), (-1,-1), (+1,-1)], np.float32)
 		self.vertex_surface_buffer = gl.glGenBuffers(1)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
@@ -402,29 +432,16 @@ class Renderer(object):
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, stride, offset)
 
-		self.shader_filename = args.file.name
-		self.resolution = args.resolution
-
 		self.image_pack_buffer = gl.glGenBuffers(1)
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)
-		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.resolution[0] * self.resolution[1] * 3, None, gl.GL_STREAM_READ)
+		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.options.pixels_count * 3, None, gl.GL_STREAM_READ)
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
-		self.current_image = np.empty((self.resolution[0], self.resolution[1], 3), dtype=np.uint8)
-		self.cumulative_image = np.zeros((self.resolution[0], self.resolution[1], 3), dtype=np.uint32)
+		self.current_image = np.empty((self.options.w, self.options.h, 3), dtype=np.uint8)
+		self.cumulative_image = np.zeros((self.options.w, self.options.h, 3), dtype=np.uint32)
 
-		self.tile_size = self.resolution
-		if args.tile_size:
-			self.tile_size = args.tile_size
-		self.fps = args.fps
-		self.render_video = args.render_video
-		self.render_video_fps = args.render_video_fps
-		if args.render_video and self.fps is None:
-			self.fps = 60
-		if args.render_video and self.render_video_fps is None:
-			self.render_video_fps = self.fps
 		self.video_framerate_controller = None
-		if args.render_video:
-			self.video_framerate_controller = FrameRateController(self.fps, self.render_video_fps)
+		if self.options.render_video:
+			self.video_framerate_controller = FrameRateController(self.options.fps, self.options.render_video_fps)
 		self.tiles = self.__calc_tiles()
 		self.render_passes = []
 		self.output = None
@@ -453,7 +470,7 @@ class Renderer(object):
 
 	def render_offscreen(self):
 		try:
-			gl.glViewport(0, 0, self.resolution[0], self.resolution[1])
+			gl.glViewport(0, 0, self.options.w, self.options.h)
 			self.render_frame()
 			self.write_video()
 		except Exception:
@@ -487,10 +504,10 @@ class Renderer(object):
 
 	def render_frame(self):
 		inputs = {}
-		if self.fps is None:
+		if self.options.fps is None:
 			inputs['time'] = time.monotonic() - self.start_time
 		else:
-			inputs['time'] = self.frame / self.fps
+			inputs['time'] = self.frame / self.options.fps
 
 		for render_pass in self.render_passes:
 			render_pass.update_parameters(inputs)
@@ -501,17 +518,17 @@ class Renderer(object):
 		#sys.stdout.flush()
 
 	def write_video(self):
-		if not self.render_video:
+		if not self.options.render_video:
 			return
 		if self.ffmpeg_feed is None:
 			self.__init_video_output()
 
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.output.framebuffer);
-		gl.glReadPixels(0, 0, self.resolution[0], self.resolution[1], gl.GL_RGB, gl.GL_UNSIGNED_BYTE, 0);
+		gl.glReadPixels(0, 0, self.options.w, self.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, 0);
 
 		buffer_addr = gl.glMapBuffer(gl.GL_PIXEL_PACK_BUFFER, gl.GL_READ_ONLY)
-		ctypes.memmove(self.current_image.ctypes.data, buffer_addr, self.resolution[0] * self.resolution[1] * 3)
+		ctypes.memmove(self.current_image.ctypes.data, buffer_addr, self.options.pixels_count * 3)
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 		gl.glUnmapBuffer(gl.GL_PIXEL_PACK_BUFFER)
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
@@ -523,7 +540,7 @@ class Renderer(object):
 			self.current_image = (self.cumulative_image / frame_action.merge_frames).astype(np.uint8)
 			for __ in range(frame_action.emit_frames):
 				self.ffmpeg_feed.write(self.current_image.tobytes())
-			self.cumulative_image = np.zeros((self.resolution[0], self.resolution[1], 3), dtype=np.uint32)
+			self.cumulative_image = np.zeros((self.options.w, self.options.h, 3), dtype=np.uint32)
 
 	def quit(self):
 		if self.ffmpeg is not None:
@@ -531,16 +548,16 @@ class Renderer(object):
 			self.ffmpeg.wait()
 
 	def __calc_tiles(self):
-		tiled_width = (self.resolution[0] + self.tile_size[0] - 1) // self.tile_size[0]
-		tiled_height = (self.resolution[1] + self.tile_size[1] - 1) // self.tile_size[1]
+		tiled_width = (self.options.w + self.options.tile_w - 1) // self.options.tile_w
+		tiled_height = (self.options.h + self.options.tile_h - 1) // self.options.tile_h
 		tiles = []
 		for x in range(tiled_width):
 			for y in range(tiled_height):
 				tile = (
-					x * self.tile_size[0],
-					y * self.tile_size[1],
-					min(x * self.tile_size[0] + self.tile_size[0], self.resolution[0]),
-					min(y * self.tile_size[1] + self.tile_size[1], self.resolution[1]),
+					x * self.options.tile_w,
+					y * self.options.tile_h,
+					min(x * self.options.tile_w + self.options.tile_w, self.options.w),
+					min(y * self.options.tile_h + self.options.tile_h, self.options.h),
 				)
 				tiles.append(tile)
 		return tiles
@@ -549,10 +566,10 @@ class Renderer(object):
 		self.ffmpeg_feed = False
 		replacements = {
 			'ffmpeg': FFMPEG_BINARY,
-			'resolution': f'{self.resolution[0]}x{self.resolution[1]}',
+			'resolution': f'{self.options.w}x{self.options.h}',
 			'input': '-',
-			'framerate': str(self.render_video_fps),
-			'output': self.render_video,
+			'framerate': str(self.options.render_video_fps),
+			'output': self.options.render_video,
 		}
 		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
 		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
@@ -574,28 +591,21 @@ def parse_resolution(val):
 
 
 def main():
-	parser = argparse.ArgumentParser(description="Shadertoy renderer")
-	parser.add_argument('file', type=argparse.FileType('r'), help="Shader file")
-	parser.add_argument('--resolution', type=parse_resolution, default=(480, 270), help="Resolution")
-	parser.add_argument('--tile-size', type=parse_resolution, help="Tile size")
-	parser.add_argument('--fps', type=int, help="Render frame rate")
-	parser.add_argument('--render-video', help="Path to rendered video file")
-	parser.add_argument('--render-video-fps', type=int, help="Video frame rate")
-	args = parser.parse_args()
+	options = RendererOptions()
 
 	os.environ['vblank_mode'] = '0'
 
 	glut.glutInit()
 	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
-	glut.glutInitWindowSize(*args.resolution);
+	glut.glutInitWindowSize(*options.resolution);
 	glut.glutCreateWindow("Shadertoy")
 
-	renderer = Renderer(json.load(args.file), args)
+	renderer = Renderer(json.load(options.file), options)
 	glut.glutDisplayFunc(renderer.render_display)
 	#glut.glutReshapeFunc(renderer.reshape)
 	glut.glutKeyboardFunc(renderer.keyboard)
 	#glut.glutIdleFunc(renderer.idle)
-	glut.glutReshapeWindow(*args.resolution);
+	glut.glutReshapeWindow(*options.resolution);
 
 	while True:
 		try:

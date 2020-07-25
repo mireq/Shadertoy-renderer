@@ -76,8 +76,9 @@ void main()
 
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow {output} -loglevel error'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
+FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input}  -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
 FRAME_DURATION_AVERAGE = 60
 
@@ -121,15 +122,17 @@ class MediaSourceType(enum.Enum):
 
 class MediaSource(object):
 	def __init__(self, fp, media_type=MediaSourceType.image):
-		self.fp = fp
-		self.fp.seek(0)
+		self.__fp = fp
 		self.__stream_info = None
+		self.media_type = media_type
 		replacements = {
 			'ffprobe': FFPROBE_BINARY,
 			'input': '-',
 		}
+		self.__fp.seek(0)
 		cmd = build_shell_command(FFPROBE_CMDLINE, replacements)
-		self.__metadata = json.loads(subprocess.check_output(cmd, input=fp.read()))
+		self.__metadata = json.loads(subprocess.check_output(cmd, input=self.__fp.read()))
+		self.__ffmpeg = None
 		for stream in self.__metadata['streams']:
 			if media_type == MediaSourceType.image and stream['codec_type'] == 'video':
 				self.__stream_info = stream
@@ -137,6 +140,36 @@ class MediaSource(object):
 			elif media_type == MediaSourceType.audio and stream['codec_type'] == 'audio':
 				self.__stream_info = stream
 				break
+		self.width = 0
+		self.height = 0
+		if self.__stream_info is not None:
+			if media_type == MediaSourceType.image:
+				self.width = self.__stream_info['width']
+				self.height = self.__stream_info['height']
+
+	def __ffmpeg_init(self):
+		if self.__ffmpeg is None:
+			replacements = {
+				'ffmpeg': FFMPEG_BINARY,
+				'input': '-',
+				'output': '-',
+			}
+			cmd = build_shell_command(FFMPEG_VIDEO_SOURCE, replacements)
+			self.__fp.seek(0)
+			self.__ffmpeg = subprocess.Popen(cmd, stdin=self.__fp, stdout=subprocess.PIPE)
+
+	def get_frame(self):
+		if self.media_type != MediaSourceType.image:
+			raise RuntimeError("Wrong media type")
+		self.__ffmpeg_init()
+		data_size = self.width * self.height * 4
+		data = self.__ffmpeg.stdout.read(data_size)
+		if len(data) == data_size:
+			self.__ffmpeg.kill()
+			self.__ffmpeg = None
+			self.__ffmpeg_init()
+			data = self.__ffmpeg.stdout.read(data_size)
+		return data
 
 
 class Shader(object):
@@ -247,10 +280,9 @@ class TextureInput(Input):
 				texture = fp.read()
 				fp.seek(0)
 				src = MediaSource(fp)
-
-				gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, 200, 200, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, texture)
-				print(self.renderer.frame)
-				print(len(texture))
+				frame = src.get_frame()
+				if src.width != 0 and src.height != 0:
+					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)

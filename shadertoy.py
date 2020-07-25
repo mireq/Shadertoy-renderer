@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import argparse
+import collections
 import ctypes
 import json
 import logging
@@ -157,11 +158,25 @@ class FrameRateController(object):
 			return FrameRateControllerResult(emit_frames=emit_frames, merge_frames=merge_frames)
 
 
-class RenderPass(object):
-	def __init__(self, renderer, pass_definition):
+Texture = collections.namedtuple('Texture', ['texture_type', 'texture_name'])
+
+
+class Input(object):
+	def __init__(self, renderer):
 		self.renderer = renderer
+
+	def get_texture(self):
+		raise NotImplementedError()
+
+	def render(self):
+		raise NotImplementedError()
+
+
+class RenderPass(Input):
+	def __init__(self, renderer, pass_definition):
+		super().__init__(renderer)
 		self.outputs = pass_definition['outputs']
-		self.inputs = pass_definition['inputs']
+		self.inputs = []
 		self.name = pass_definition['name']
 		self.type = pass_definition['type']
 		if len(self.outputs) != 1:
@@ -192,9 +207,6 @@ class RenderPass(object):
 		gl.glUniform3f(shader.get_uniform("iResolution"), float(self.renderer.resolution[0]), float(self.renderer.resolution[1]), float(0))
 
 		return shader
-
-	def render(self):
-		raise NotImplementedError()
 
 	def get_vertex_shader(self):
 		if hasattr(self, 'vertex_shader_code'):
@@ -272,6 +284,9 @@ class ImageRenderPass(RenderPass):
 
 			gl.glFinish()
 
+	def get_texture(self):
+		return Texture(gl.GL_TEXTURE_2D, self.image)
+
 
 class Renderer(object):
 	def __init__(self, shader_definition, args):
@@ -328,6 +343,9 @@ class Renderer(object):
 		if self.output is None:
 			raise RuntimeError("Output is not defined")
 
+		for render_pass, render_pass_definition in zip(self.render_passes, shader_definition['renderpass']):
+			inputs = []
+
 		self.frame = 0
 
 	def display(self):
@@ -350,7 +368,7 @@ class Renderer(object):
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 
 		gl.glActiveTexture(gl.GL_TEXTURE0);
-		gl.glBindTexture(gl.GL_TEXTURE_2D, self.output.image);
+		gl.glBindTexture(*self.output.get_texture());
 		gl.glUniform1i(self.shader.get_uniform("texture"), 0)
 
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)

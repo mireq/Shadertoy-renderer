@@ -284,6 +284,10 @@ class Input(object):
 			return TextureInput(renderer, input_definition)
 		elif input_definition['type'] == 'cubemap':
 			return CubeMapInput(renderer, input_definition)
+		elif input_definition['type'] == 'buffer':
+			return BufferInput(renderer, input_definition)
+		elif input_definition['type'] == 'keyboard':
+			return DummyInput(renderer, input_definition['channel'])
 		else:
 			raise NotImplementedError("Input type %s not implemented" % input_definition['type'])
 
@@ -388,6 +392,28 @@ class CubeMapInput(TextureInput):
 		return (gl.GL_TEXTURE_CUBE_MAP, self.texture)
 
 
+class BufferInput(TextureInput):
+	def __init__(self, renderer, input_definition):
+		super().__init__(renderer, input_definition)
+		self.width = self.renderer.options.w
+		self.height = self.renderer.options.h
+		self.id = input_definition['id']
+		self.texture = 0
+
+	def load_texture(self):
+		self.texture = self.renderer.get_render_pass_by_id(self.id).get_texture()
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture.texture_name)
+		self._setup_sampler(gl.GL_TEXTURE_2D)
+		if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
+			gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+
+	def get_resolution(self):
+		return [self.width, self.height, 1]
+
+	def get_texture(self):
+		return self.texture
+
+
 class RenderPass(object):
 	def __init__(self, renderer, pass_definition):
 		self.renderer = renderer
@@ -421,6 +447,8 @@ class RenderPass(object):
 	def create(renderer, pass_definition):
 		if pass_definition['type'] == 'image':
 			return ImageRenderPass(renderer, pass_definition)
+		elif pass_definition['type'] == 'buffer':
+			return BufferRenderPass(renderer, pass_definition)
 		else:
 			raise NotImplementedError("Shader pass %s not implemented" % pass_definition['type'])
 
@@ -451,7 +479,7 @@ class RenderPass(object):
 			if isinstance(i_channel, CubeMapInput):
 				i_channels[i_channel.channel] = 'samplerCube'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
-		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
+		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.renderer.common + '\n' + self.code)
 
 	def update_uniforms(self, inputs):
 		self.shader.use()
@@ -471,7 +499,9 @@ class RenderPass(object):
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
-	def make_tile_framebuffer(self):
+	def make_tile_framebuffer(self, internal_format=None):
+		if internal_format is None:
+			internal_format = self._framebuffer_internal_format
 		image = gl.glGenTextures(1)
 		framebuffer = gl.glGenFramebuffers(1)
 		tile_image = gl.glGenTextures(1)
@@ -479,7 +509,7 @@ class RenderPass(object):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
@@ -488,7 +518,7 @@ class RenderPass(object):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, self.renderer.options.tile_w, self.renderer.options.tile_h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.tile_w, self.renderer.options.tile_h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
@@ -500,14 +530,16 @@ class RenderPass(object):
 	def bind_inputs(self):
 		for input_channel in self.inputs:
 			input_channel.load_texture()
-			gl.glActiveTexture(gl.GL_TEXTURE0 + input_channel.channel + 1);
 			texture = input_channel.get_texture()
 			if texture is not None:
+				gl.glActiveTexture(gl.GL_TEXTURE0 + input_channel.channel + 1);
 				gl.glBindTexture(*texture);
 				gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), input_channel.channel + 1)
 
 
 class ImageRenderPass(RenderPass):
+	_framebuffer_internal_format = gl.GL_RGB
+
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
 		framebuffer, image, tile_image, tile_framebuffer = self.make_tile_framebuffer()
@@ -517,8 +549,8 @@ class ImageRenderPass(RenderPass):
 		self.tile_framebuffer = tile_framebuffer
 
 	def render(self):
-		self.bind_inputs()
 		self.shader.use()
+		self.bind_inputs()
 
 		tiling = len(self.renderer.tiles) > 1
 		for tile in self.renderer.tiles:
@@ -540,6 +572,10 @@ class ImageRenderPass(RenderPass):
 
 	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.image)
+
+
+class BufferRenderPass(ImageRenderPass):
+	_framebuffer_internal_format = gl.GL_RGBA32F
 
 
 class RendererOptions(object):
@@ -602,7 +638,9 @@ class Renderer(object):
 			self.video_framerate_controller = FrameRateController(self.options.fps, self.options.render_video_fps)
 		self.tiles = self.__calc_tiles()
 		self.render_passes = []
+		self.render_passes_by_id = {}
 		self.output = None
+		self.common = ''
 		self.ffmpeg = None
 		self.ffmpeg_feed = None
 		self.start_time = time.monotonic()
@@ -613,10 +651,17 @@ class Renderer(object):
 		self.mouse_pressed = False
 
 		for render_pass_definition in shader_definition['renderpass']:
+			if render_pass_definition['type'] == 'common':
+				self.common = render_pass_definition['code']
+
+		for render_pass_definition in shader_definition['renderpass']:
+			if render_pass_definition['type'] == 'common':
+				continue
 			render_pass = RenderPass.create(self, render_pass_definition)
 			if render_pass.type == 'image':
 				self.output = render_pass
 			self.render_passes.append(render_pass)
+			self.render_passes_by_id[render_pass.output_id] = render_pass
 
 		if self.output is None:
 			raise RuntimeError("Output is not defined")
@@ -740,6 +785,9 @@ class Renderer(object):
 			self.ffmpeg.stdin.close()
 			self.ffmpeg.wait()
 
+	def get_render_pass_by_id(self, output_id):
+		return self.render_passes_by_id[output_id]
+
 	def __calc_tiles(self):
 		tiled_width = (self.options.w + self.options.tile_w - 1) // self.options.tile_w
 		tiled_height = (self.options.h + self.options.tile_h - 1) // self.options.tile_h
@@ -827,3 +875,4 @@ def main():
 
 if __name__ == "__main__":
 	main()
+

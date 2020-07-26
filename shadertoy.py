@@ -382,7 +382,7 @@ class RenderPass(object):
 			elif key == 'time_delta':
 				gl.glUniform1f(self.shader.get_uniform("iTimeDelta"), val)
 			elif key == 'frame':
-				gl.glUniform1f(self.shader.get_uniform("iFrame"), val)
+				gl.glUniform1i(self.shader.get_uniform("iFrame"), val)
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 

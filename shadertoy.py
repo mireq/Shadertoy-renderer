@@ -343,7 +343,7 @@ class TextureInput(Input):
 		return [self.width, self.height, 1]
 
 	def get_texture(self):
-		return (gl.GL_TEXTURE_2D, self.texture)
+		return Texture(gl.GL_TEXTURE_2D, self.texture)
 
 	def _setup_sampler(self, texture_type):
 		gl.glTexParameteri(texture_type, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR else self.filter)
@@ -389,7 +389,7 @@ class CubeMapInput(TextureInput):
 		return [self.width, self.height, self.depth]
 
 	def get_texture(self):
-		return (gl.GL_TEXTURE_CUBE_MAP, self.texture)
+		return Texture(gl.GL_TEXTURE_CUBE_MAP, self.texture)
 
 
 class BufferInput(TextureInput):
@@ -398,20 +398,41 @@ class BufferInput(TextureInput):
 		self.width = self.renderer.options.w
 		self.height = self.renderer.options.h
 		self.id = input_definition['id']
+		self.input_framebuffer = None
+		self.framebuffer = 0
 		self.texture = 0
 
 	def load_texture(self):
-		self.texture = self.renderer.get_render_pass_by_id(self.id).get_texture()
-		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture.texture_name)
+		if self.texture != 0:
+			return
+		render_pass = self.renderer.get_render_pass_by_id(self.id)
+		self.input_framebuffer = render_pass.get_framebuffer()
+
+		self.framebuffer = gl.glGenFramebuffers(1)
+		self.texture = gl.glGenTextures(1)
+
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.width, self.height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
 		self._setup_sampler(gl.GL_TEXTURE_2D)
-		if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
-			gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.texture, 0);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
 	def get_resolution(self):
 		return [self.width, self.height, 1]
 
 	def get_texture(self):
-		return self.texture
+		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.input_framebuffer)
+		gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, self.framebuffer)
+		gl.glBlitFramebuffer(0, 0, self.width, self.height, 0, 0, self.width, self.height, gl.GL_COLOR_BUFFER_BIT, gl.GL_NEAREST)
+		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
+		gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+		if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
+			gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+		return Texture(gl.GL_TEXTURE_2D, self.texture)
 
 
 class RenderPass(object):
@@ -438,6 +459,9 @@ class RenderPass(object):
 		self.shader = self.make_shader()
 
 	def get_texture(self):
+		raise NotImplementedError()
+
+	def get_framebuffer(self):
 		raise NotImplementedError()
 
 	def render(self):
@@ -532,9 +556,12 @@ class RenderPass(object):
 			input_channel.load_texture()
 			texture = input_channel.get_texture()
 			if texture is not None:
-				gl.glActiveTexture(gl.GL_TEXTURE0 + input_channel.channel + 1);
+				channel = input_channel.channel
+				gl.glActiveTexture(gl.GL_TEXTURE0 + channel + 1);
 				gl.glBindTexture(*texture);
-				gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), input_channel.channel + 1)
+				gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), channel + 1)
+				gl.glActiveTexture(gl.GL_TEXTURE0);
+				gl.glBindTexture(texture[0], 0);
 
 
 class ImageRenderPass(RenderPass):
@@ -557,13 +584,15 @@ class ImageRenderPass(RenderPass):
 			gl.glUniform2f(self.shader.get_uniform("iTileOffset"), float(tile[0]), float(tile[1]))
 
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer);
+			gl.glActiveTexture(gl.GL_TEXTURE0);
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image);
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 
 			if tiling:
 				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.tile_framebuffer)
 				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, self.framebuffer)
-				gl.glBlitFramebuffer(0, 0, tile[2] - tile[0], tile[3] - tile[1], tile[0], tile[1], tile[2], tile[3], gl.GL_COLOR_BUFFER_BIT, gl.GL_LINEAR)
+				gl.glBlitFramebuffer(0, 0, tile[2] - tile[0], tile[3] - tile[1], tile[0], tile[1], tile[2], tile[3], gl.GL_COLOR_BUFFER_BIT, gl.GL_NEAREST)
 				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
 				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
 
@@ -572,6 +601,9 @@ class ImageRenderPass(RenderPass):
 
 	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.image)
+
+	def get_framebuffer(self):
+		return self.framebuffer
 
 
 class BufferRenderPass(ImageRenderPass):

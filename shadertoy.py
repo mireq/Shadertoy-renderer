@@ -588,6 +588,7 @@ class RendererOptions(object):
 		parser.add_argument('--render-video', help="Path to rendered video file")
 		parser.add_argument('--render-video-fps', type=int, help="Video frame rate")
 		parser.add_argument('--benchmark', action='store_true', help="Benchmark")
+		parser.add_argument('--quiet', action='store_true', help="Queit")
 		args = parser.parse_args()
 
 		self.file = args.file
@@ -607,6 +608,7 @@ class RendererOptions(object):
 			self.fps = 60
 		if args.render_video and self.render_video_fps is None:
 			self.render_video_fps = self.fps
+		self.quiet = args.quiet
 
 
 class Renderer(object):
@@ -748,8 +750,9 @@ class Renderer(object):
 		minute = (uniforms['time'] - hour * 3600) // 60
 		second = (uniforms['time'] - hour * 3600 - minute * 60)
 
-		sys.stdout.write(f"\x1b[2K\rf: {self.frame:<5} fps: {fps_text:<10} time: {hour}:{minute:02}:{int(second):02}.{int(second*100%100):02}")
-		sys.stdout.flush()
+		if not self.options.quiet:
+			sys.stdout.write(f"\x1b[2K\rf: {self.frame:<5} fps: {fps_text:<10} time: {hour}:{minute:02}:{int(second):02}.{int(second*100%100):02}")
+			sys.stdout.flush()
 
 		self.frame += 1
 		self.last_time = self.current_time

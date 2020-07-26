@@ -273,7 +273,8 @@ class Input(object):
 		self.wrap = gl.GL_REPEAT
 		if input_definition['sampler']['wrap'] == 'clamp':
 			self.wrap = gl.GL_CLAMP_TO_EDGE
-		self.vflip = input_definition['sampler']['vflip']
+		self.vflip = input_definition['sampler']['vflip'] == 'true'
+		self.srgb = input_definition['sampler']['srgb'] == 'true'
 
 	@staticmethod
 	def create(renderer, input_definition):
@@ -309,7 +310,7 @@ class TextureInput(Input):
 				src = MediaSource(fp, vflip=self.vflip)
 				frame = src.get_frame()
 				if src.width != 0 and src.height != 0:
-					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
+					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_SRGB8_ALPHA8 if self.srgb else gl.GL_RGBA8, src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
 					if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
 						gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 

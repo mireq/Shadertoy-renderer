@@ -78,7 +78,7 @@ FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
 FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
-FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input}  -f rawvideo -pix_fmt rgba -loglevel error {output}'
+FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
 FRAME_DURATION_AVERAGE = 60
 
@@ -99,7 +99,16 @@ def load_from_file(filename, base=None, binary=True):
 def build_shell_command(cmd, replacements):
 	replacements = {'{'+key+'}': val for key, val in replacements.items()}
 	params = shlex.split(cmd)
-	return [replacements.get(param, param) for param in params]
+	new_params = []
+	for param in params:
+		replacement = replacements.get(param, param)
+		if replacement is None:
+			continue
+		elif isinstance(replacement, list):
+			new_params += replacement
+		else:
+			new_params.append(replacement)
+	return new_params
 
 
 @contextlib.contextmanager
@@ -121,9 +130,10 @@ class MediaSourceType(enum.Enum):
 
 
 class MediaSource(object):
-	def __init__(self, fp, media_type=MediaSourceType.image):
+	def __init__(self, fp, media_type=MediaSourceType.image, vflip=False):
 		self.__fp = fp
 		self.__stream_info = None
+		self.__vflip = vflip
 		self.media_type = media_type
 		replacements = {
 			'ffprobe': FFPROBE_BINARY,
@@ -153,7 +163,10 @@ class MediaSource(object):
 				'ffmpeg': FFMPEG_BINARY,
 				'input': '-',
 				'output': '-',
+				'filters': None,
 			}
+			if self.__vflip:
+				replacements['filters'] = ['-vf', 'vflip']
 			cmd = build_shell_command(FFMPEG_VIDEO_SOURCE, replacements)
 			self.__fp.seek(0)
 			self.__ffmpeg = subprocess.Popen(cmd, stdin=self.__fp, stdout=subprocess.PIPE)
@@ -260,6 +273,7 @@ class Input(object):
 		self.wrap = gl.GL_REPEAT
 		if input_definition['sampler']['wrap'] == 'clamp':
 			self.wrap = gl.GL_CLAMP_TO_EDGE
+		self.vflip = input_definition['sampler']['vflip']
 
 	@staticmethod
 	def create(renderer, input_definition):
@@ -292,7 +306,7 @@ class TextureInput(Input):
 			with open_asset(self.filepath, self.renderer.options.shader_filename) as fp:
 				texture = fp.read()
 				fp.seek(0)
-				src = MediaSource(fp)
+				src = MediaSource(fp, vflip=self.vflip)
 				frame = src.get_frame()
 				if src.width != 0 and src.height != 0:
 					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)

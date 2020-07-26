@@ -20,6 +20,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+NR_CHANNELS = 4
+
 
 FRAGMENT_SHADER_TEMPLATE = """#version 130
 
@@ -288,14 +290,32 @@ class Input(object):
 	def get_texture(self):
 		raise NotImplementedError()
 
+	def get_resolution(self):
+		return [0, 0, 0]
+
+	def get_channel_time(self):
+		return 0.0
+
 	def load_texture(self):
 		pass
+
+
+class DummyInput(Input):
+	def __init__(self, renderer, channel):
+		self.renderer = renderer
+		self.channel = channel
+		self.id = None
+
+	def get_texture(self):
+		return None
 
 
 class TextureInput(Input):
 	def __init__(self, renderer, input_definition):
 		super().__init__(renderer, input_definition)
 		self.texture = None
+		self.width = 0
+		self.height = 0
 
 	def load_texture(self):
 		if self.texture is None:
@@ -306,12 +326,17 @@ class TextureInput(Input):
 			with open_asset(self.filepath, self.renderer.options.shader_filename) as fp:
 				src = MediaSource(fp, vflip=self.vflip)
 				frame = src.get_frame()
+				self.width = src.width
+				self.height = src.height
 				if src.width != 0 and src.height != 0:
 					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, self._internal_format(), src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
 					if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
 						gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+	def get_resolution(self):
+		return [self.width, self.height, 1]
 
 	def get_texture(self):
 		return (gl.GL_TEXTURE_2D, self.texture)
@@ -331,6 +356,9 @@ class CubeMapInput(TextureInput):
 	def __init__(self, renderer, input_definition):
 		super().__init__(renderer, input_definition)
 		self.texture = None
+		self.width = 0
+		self.height = 0
+		self.depth = 0
 
 	def load_texture(self):
 		if self.texture is None:
@@ -342,11 +370,19 @@ class CubeMapInput(TextureInput):
 				with open_asset(filepath, self.renderer.options.shader_filename) as fp:
 					src = MediaSource(fp, vflip=self.vflip)
 					frame = src.get_frame()
+					if i == 0:
+						self.depth = src.width
+						self.height = src.height
+					elif i == 1:
+						self.width = src.width
 					if src.width != 0 and src.height != 0:
 						gl.glTexImage2D(gl.GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, self._internal_format(), src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
 			if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
 				gl.glGenerateMipmap(gl.GL_TEXTURE_CUBE_MAP)
 			gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, 0)
+
+	def get_resolution(self):
+		return [self.width, self.height, self.depth]
 
 	def get_texture(self):
 		return (gl.GL_TEXTURE_CUBE_MAP, self.texture)
@@ -365,7 +401,14 @@ class RenderPass(object):
 		self.code = pass_definition['code']
 		if self.code.startswith('file://'):
 			self.code = load_from_file(self.code[len('file://'):], self.renderer.options.shader_filename, binary=False)
-		self.inputs = [Input.create(self.renderer, input_definition) for input_definition in pass_definition['inputs']]
+
+		self.inputs = []
+		input_definitions = {input_definition['channel']: input_definition for input_definition in pass_definition['inputs']}
+		for channel in range(NR_CHANNELS):
+			if channel in input_definitions:
+				self.inputs.append(Input.create(self.renderer, input_definitions[channel]))
+			else:
+				self.inputs.append(DummyInput(self.renderer, channel))
 		self.shader = self.make_shader()
 
 	def get_texture(self):
@@ -403,14 +446,14 @@ class RenderPass(object):
 
 	def get_fragment_shader(self):
 		# samplerCube
-		i_channels = ['sampler2D'] * 4
+		i_channels = ['sampler2D'] * NR_CHANNELS
 		for i_channel in self.inputs:
 			if isinstance(i_channel, CubeMapInput):
 				i_channels[i_channel.channel] = 'samplerCube'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
 
-	def update_parameters(self, inputs):
+	def update_uniforms(self, inputs):
 		self.shader.use()
 		for key, val in inputs.items():
 			if key == 'time':
@@ -419,6 +462,10 @@ class RenderPass(object):
 				gl.glUniform1f(self.shader.get_uniform("iTimeDelta"), val)
 			elif key == 'frame':
 				gl.glUniform1i(self.shader.get_uniform("iFrame"), val)
+			elif key == 'channel_time':
+				gl.glUniform1fv(self.shader.get_uniform("iChannelTime"), NR_CHANNELS, np.array(val, np.float32).nbytes)
+			elif key == 'channel_resolution':
+				gl.glUniform3fv(self.shader.get_uniform("iChannelResolution"), NR_CHANNELS, np.array(val, np.float32).nbytes)
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
@@ -452,8 +499,10 @@ class RenderPass(object):
 		for input_channel in self.inputs:
 			input_channel.load_texture()
 			gl.glActiveTexture(gl.GL_TEXTURE0 + input_channel.channel + 1);
-			gl.glBindTexture(*input_channel.get_texture());
-			gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), input_channel.channel + 1)
+			texture = input_channel.get_texture()
+			if texture is not None:
+				gl.glBindTexture(*texture);
+				gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), input_channel.channel + 1)
 
 
 class ImageRenderPass(RenderPass):
@@ -609,17 +658,19 @@ class Renderer(object):
 			sys.exit()
 
 	def render_frame(self):
-		inputs = {}
+		uniforms = {}
 		if self.options.render_video is not None or self.options.benchmark:
-			inputs['time'] = self.frame / self.options.fps
-			inputs['time_delta'] = 1.0 / self.options.fps
+			uniforms['time'] = self.frame / self.options.fps
+			uniforms['time_delta'] = 1.0 / self.options.fps
 		else:
-			inputs['time'] = self.current_time - self.start_time
-			inputs['time_delta'] = self.current_time - self.last_time
-		inputs['frame'] = self.frame
+			uniforms['time'] = self.current_time - self.start_time
+			uniforms['time_delta'] = self.current_time - self.last_time
+		uniforms['frame'] = self.frame
 
 		for render_pass in self.render_passes:
-			render_pass.update_parameters(inputs)
+			uniforms['channel_time'] = [channel.get_channel_time() for channel in render_pass.inputs]
+			uniforms['channel_resolution'] = [channel.get_resolution() for channel in render_pass.inputs]
+			render_pass.update_uniforms(uniforms)
 
 		frame_start = time.monotonic()
 		for render_pass in self.render_passes:
@@ -630,14 +681,11 @@ class Renderer(object):
 
 		fps = 1.0 / statistics.mean(self.frame_durations)
 		fps_text = f'{fps:8.8}'
-		hour = inputs['time'] // 3600
-		minute = (inputs['time'] - hour * 3600) // 60
-		second = (inputs['time'] - hour * 3600 - minute * 60)
-		hour = '%d' % hour
-		minute = '%02d' % minute
-		second = '%02.2f' % second
+		hour = uniforms['time'] // 3600
+		minute = (uniforms['time'] - hour * 3600) // 60
+		second = (uniforms['time'] - hour * 3600 - minute * 60)
 
-		sys.stdout.write(f"\x1b[2K\rf: {self.frame:<5} fps: {fps_text:<10} time: {hour}:{minute}:{second}")
+		sys.stdout.write(f"\x1b[2K\rf: {self.frame:<5} fps: {fps_text:<10} time: {hour}:{minute:02}:{int(second):02}.{int(second*100%100):02}")
 		sys.stdout.flush()
 
 		self.frame += 1

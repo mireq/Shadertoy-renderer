@@ -280,8 +280,10 @@ class Input(object):
 	def create(renderer, input_definition):
 		if input_definition['type'] == 'texture':
 			return TextureInput(renderer, input_definition)
+		elif input_definition['type'] == 'cubemap':
+			return CubeMapInput(renderer, input_definition)
 		else:
-			raise NotImplementedError("Input type not implemented" % input_definition['type'])
+			raise NotImplementedError("Input type %s not implemented" % input_definition['type'])
 
 	def get_texture(self):
 		raise NotImplementedError()
@@ -299,18 +301,13 @@ class TextureInput(Input):
 		if self.texture is None:
 			self.texture = gl.glGenTextures(1)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR else self.filter)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, self.filter)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, self.wrap)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, self.wrap)
+			self._setup_sampler(gl.GL_TEXTURE_2D)
 
 			with open_asset(self.filepath, self.renderer.options.shader_filename) as fp:
-				texture = fp.read()
-				fp.seek(0)
 				src = MediaSource(fp, vflip=self.vflip)
 				frame = src.get_frame()
 				if src.width != 0 and src.height != 0:
-					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_SRGB8_ALPHA8 if self.srgb else gl.GL_RGBA8, src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
+					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, self._internal_format(), src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
 					if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
 						gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 
@@ -318,6 +315,41 @@ class TextureInput(Input):
 
 	def get_texture(self):
 		return (gl.GL_TEXTURE_2D, self.texture)
+
+	def _setup_sampler(self, texture_type):
+		gl.glTexParameteri(texture_type, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR else self.filter)
+		gl.glTexParameteri(texture_type, gl.GL_TEXTURE_MIN_FILTER, self.filter)
+		gl.glTexParameteri(texture_type, gl.GL_TEXTURE_WRAP_S, self.wrap)
+		gl.glTexParameteri(texture_type, gl.GL_TEXTURE_WRAP_T, self.wrap)
+		gl.glTexParameteri(texture_type, gl.GL_TEXTURE_WRAP_R, self.wrap)
+
+	def _internal_format(self):
+		return gl.GL_SRGB8_ALPHA8 if self.srgb else gl.GL_RGBA8
+
+
+class CubeMapInput(TextureInput):
+	def __init__(self, renderer, input_definition):
+		super().__init__(renderer, input_definition)
+		self.texture = None
+
+	def load_texture(self):
+		if self.texture is None:
+			self.texture = gl.glGenTextures(1)
+			gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, self.texture)
+			self._setup_sampler(gl.GL_TEXTURE_CUBE_MAP)
+			for i in range(6):
+				filepath = (f'_{i}' if i else '').join(os.path.splitext(self.filepath))
+				with open_asset(filepath, self.renderer.options.shader_filename) as fp:
+					src = MediaSource(fp, vflip=self.vflip)
+					frame = src.get_frame()
+					if src.width != 0 and src.height != 0:
+						gl.glTexImage2D(gl.GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, self._internal_format(), src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
+			if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
+				gl.glGenerateMipmap(gl.GL_TEXTURE_CUBE_MAP)
+			gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, 0)
+
+	def get_texture(self):
+		return (gl.GL_TEXTURE_CUBE_MAP, self.texture)
 
 
 class RenderPass(object):
@@ -333,6 +365,7 @@ class RenderPass(object):
 		self.code = pass_definition['code']
 		if self.code.startswith('file://'):
 			self.code = load_from_file(self.code[len('file://'):], self.renderer.options.shader_filename, binary=False)
+		self.inputs = [Input.create(self.renderer, input_definition) for input_definition in pass_definition['inputs']]
 		self.shader = self.make_shader()
 
 	def get_texture(self):
@@ -371,6 +404,9 @@ class RenderPass(object):
 	def get_fragment_shader(self):
 		# samplerCube
 		i_channels = ['sampler2D'] * 4
+		for i_channel in self.inputs:
+			if isinstance(i_channel, CubeMapInput):
+				i_channels[i_channel.channel] = 'samplerCube'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.code)
 
@@ -531,10 +567,6 @@ class Renderer(object):
 
 		if self.output is None:
 			raise RuntimeError("Output is not defined")
-
-		for render_pass, render_pass_definition in zip(self.render_passes, shader_definition['renderpass']):
-			inputs = [Input.create(self, input_definition) for input_definition in render_pass_definition['inputs']]
-			render_pass.inputs = inputs
 
 		self.frame = 0
 

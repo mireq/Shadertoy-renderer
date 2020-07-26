@@ -466,6 +466,8 @@ class RenderPass(object):
 				gl.glUniform1fv(self.shader.get_uniform("iChannelTime"), NR_CHANNELS, np.array(val, np.float32).nbytes)
 			elif key == 'channel_resolution':
 				gl.glUniform3fv(self.shader.get_uniform("iChannelResolution"), NR_CHANNELS, np.array(val, np.float32).nbytes)
+			elif key == 'mouse':
+				gl.glUniform4f(self.shader.get_uniform("iMouse"), *val)
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
@@ -607,6 +609,8 @@ class Renderer(object):
 		self.current_time = self.start_time
 		self.last_time = self.start_time
 		self.frame_durations = []
+		self.mouse_state = [0, 0, 0, 0]
+		self.mouse_pressed = False
 
 		for render_pass_definition in shader_definition['renderpass']:
 			render_pass = RenderPass.create(self, render_pass_definition)
@@ -657,6 +661,19 @@ class Renderer(object):
 			self.quit()
 			sys.exit()
 
+	def mouse(self, button, state, x, y):
+		self.mouse_pressed = state == glut.GLUT_DOWN
+		coords = self.__transform_mouse_coords(x, y)
+		mouse_pressed = 1 if self.mouse_pressed else -1
+		self.mouse_state = [coords[0], coords[1], coords[0] * mouse_pressed, coords[1] * mouse_pressed]
+
+	def mouse_motion(self, x, y):
+		if not self.mouse_pressed:
+			return
+		coords = self.__transform_mouse_coords(x, y)
+		self.mouse_state[0] = coords[0]
+		self.mouse_state[1] = coords[1]
+
 	def render_frame(self):
 		uniforms = {}
 		if self.options.render_video is not None or self.options.benchmark:
@@ -666,6 +683,7 @@ class Renderer(object):
 			uniforms['time'] = self.current_time - self.start_time
 			uniforms['time_delta'] = self.current_time - self.last_time
 		uniforms['frame'] = self.frame
+		uniforms['mouse'] = self.mouse_state
 
 		for render_pass in self.render_passes:
 			uniforms['channel_time'] = [channel.get_channel_time() for channel in render_pass.inputs]
@@ -750,6 +768,12 @@ class Renderer(object):
 		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
 		self.ffmpeg_feed = self.ffmpeg.stdin
 
+	def __transform_mouse_coords(self, x, y):
+		window_width = glut.glutGet(glut.GLUT_WINDOW_WIDTH)
+		window_height = glut.glutGet(glut.GLUT_WINDOW_HEIGHT)
+		y = window_height - y
+		return (x * self.options.w // window_width, y * self.options.h // window_height)
+
 
 def parse_resolution(val):
 	msg = "Resulution in wrong format, expected widthxheight e.g. 1920x1080"
@@ -775,9 +799,15 @@ def main():
 	glut.glutInitWindowSize(*options.resolution);
 	glut.glutCreateWindow("Shadertoy")
 
+	def mouse(button, state, x, y):
+		print(button, state, x, y)
+
+
 	renderer = Renderer(json.load(options.file), options)
 	glut.glutDisplayFunc(renderer.render_display)
 	#glut.glutReshapeFunc(renderer.reshape)
+	glut.glutMouseFunc(renderer.mouse)
+	glut.glutMotionFunc(renderer.mouse_motion)
 	glut.glutKeyboardFunc(renderer.keyboard)
 	#glut.glutIdleFunc(renderer.idle)
 	glut.glutReshapeWindow(*options.resolution);

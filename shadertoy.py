@@ -257,6 +257,9 @@ class Input(object):
 			self.filter = gl.GL_LINEAR_MIPMAP_LINEAR
 		elif input_definition['sampler']['filter'] == 'linear':
 			self.filter = gl.GL_LINEAR
+		self.wrap = gl.GL_REPEAT
+		if input_definition['sampler']['wrap'] == 'clamp':
+			self.wrap = gl.GL_CLAMP_TO_EDGE
 
 	@staticmethod
 	def create(renderer, input_definition):
@@ -281,6 +284,11 @@ class TextureInput(Input):
 		if self.texture is None:
 			self.texture = gl.glGenTextures(1)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR else self.filter)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, self.filter)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, self.wrap)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, self.wrap)
+
 			with open_asset(self.filepath, self.renderer.options.shader_filename) as fp:
 				texture = fp.read()
 				fp.seek(0)
@@ -288,10 +296,9 @@ class TextureInput(Input):
 				frame = src.get_frame()
 				if src.width != 0 and src.height != 0:
 					gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, src.width, src.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, frame)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR else self.filter)
-			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, self.filter)
-			if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
-				gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+					if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
+						gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
 	def get_texture(self):

@@ -41,7 +41,10 @@ uniform vec2      iTileOffset;           // offset of tile
 
 void main()
 {
-	mainImage(gl_FragColor, gl_FragCoord.xy + iTileOffset);
+	vec4 color = vec4(0.0,0.0,0.0,1.0);
+	mainImage(color, gl_FragCoord.xy + iTileOffset);
+	color.w = 1.0;
+	gl_FragColor = color;
 }
 
 """

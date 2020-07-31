@@ -943,6 +943,7 @@ def extract_sources(args):
 def main():
 	parser = argparse.ArgumentParser(description="Shadertoy tool")
 	subparsers = parser.add_subparsers(help="Command", dest='command')
+	subparsers.required = True
 
 	parser_render = subparsers.add_parser('render', help="Render")
 	parser_render.add_argument('file', type=argparse.FileType('r'), help="Shader file")

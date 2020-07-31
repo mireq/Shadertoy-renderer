@@ -659,6 +659,7 @@ class Renderer(object):
 		self.shader.use()
 		stride = self.vertex_surface.strides[0]
 		offset = ctypes.c_void_p(0)
+		gl.glBindVertexArray(gl.glGenVertexArrays(1))
 		gl.glEnableVertexAttribArray(self.shader.get_attribute("position"))
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, stride, offset)
@@ -881,6 +882,8 @@ def main():
 	os.environ['vblank_mode'] = '0'
 
 	glut.glutInit()
+	#glut.glutInitContextVersion(3, 3)
+	#glut.glutInitContextProfile(glut.GLUT_CORE_PROFILE)
 	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
 	glut.glutInitWindowSize(*options.resolution);
 	glut.glutCreateWindow("Shadertoy")

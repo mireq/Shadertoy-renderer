@@ -7,11 +7,13 @@ import enum
 import json
 import logging
 import os
+import re
 import shlex
 import statistics
 import subprocess
 import sys
 import time
+import unicodedata
 
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
@@ -86,6 +88,19 @@ FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_strea
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
 FRAME_DURATION_AVERAGE = 60
+
+
+def slugify(name, existing_names=None):
+	delimiter = '_'
+	name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode().lower()
+	name = re.sub(r'[^a-z0-9]+', '_', name).strip(delimiter)
+	if existing_names:
+		basename = name
+		suffix = 0
+		while name in existing_names:
+			suffix += 1
+			name = basename + '_' + str(suffix)
+	return name
 
 
 def to_local_filename(filename, base=None):
@@ -899,6 +914,32 @@ def render(args):
 			sys.exit()
 
 
+def extract_sources(args):
+	args.file.seek(0)
+	shader = json.load(args.file)
+	tmp_filename = args.file.name + '.tmp'
+	existing_names = set()
+	try:
+		for renderpass in shader['renderpass']:
+			if renderpass['code'].startswith('file://'):
+				continue
+			basename = slugify(renderpass['name'], existing_names)
+			existing_names.add(basename)
+			filename = to_local_filename(basename + '.vert', args.file.name)
+			with open(filename, 'w') as fp:
+				fp.write(renderpass['code'])
+			renderpass['code'] = 'file://' + basename + '.vert'
+		with open(tmp_filename, 'w') as fp:
+			json.dump(shader, fp, indent='\t')
+		os.rename(tmp_filename, args.file.name)
+	except Exception:
+		try:
+			os.remove(tmp_filename)
+		except FileNotFoundError:
+			pass
+		raise
+
+
 def main():
 	parser = argparse.ArgumentParser(description="Shadertoy tool")
 	subparsers = parser.add_subparsers(help="Command", dest='command')
@@ -912,6 +953,9 @@ def main():
 	parser_render.add_argument('--render-video-fps', type=int, help="Video frame rate")
 	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
 	parser_render.add_argument('--quiet', action='store_true', help="Queit")
+
+	parser_extract_sources = subparsers.add_parser('extract_sources', help="Extract shader sources")
+	parser_extract_sources.add_argument('file', type=argparse.FileType('r'), help="Shader file")
 
 	args = parser.parse_args()
 

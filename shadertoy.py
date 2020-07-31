@@ -614,18 +614,7 @@ class BufferRenderPass(ImageRenderPass):
 
 
 class RendererOptions(object):
-	def __init__(self):
-		parser = argparse.ArgumentParser(description="Shadertoy renderer")
-		parser.add_argument('file', type=argparse.FileType('r'), help="Shader file")
-		parser.add_argument('--resolution', type=parse_resolution, default=(480, 270), help="Resolution")
-		parser.add_argument('--tile-size', type=parse_resolution, help="Tile size")
-		parser.add_argument('--fps', type=int, help="Render frame rate")
-		parser.add_argument('--render-video', help="Path to rendered video file")
-		parser.add_argument('--render-video-fps', type=int, help="Video frame rate")
-		parser.add_argument('--benchmark', action='store_true', help="Benchmark")
-		parser.add_argument('--quiet', action='store_true', help="Queit")
-		args = parser.parse_args()
-
+	def __init__(self, args):
 		self.file = args.file
 		self.shader_filename = args.file.name
 		self.resolution = args.resolution
@@ -876,8 +865,8 @@ def parse_resolution(val):
 	return (width, height)
 
 
-def main():
-	options = RendererOptions()
+def render(args):
+	options = RendererOptions(args)
 
 	os.environ['vblank_mode'] = '0'
 
@@ -910,6 +899,24 @@ def main():
 			sys.exit()
 
 
+def main():
+	parser = argparse.ArgumentParser(description="Shadertoy tool")
+	subparsers = parser.add_subparsers(help="Command", dest='command')
+
+	parser_render = subparsers.add_parser('render', help="Render")
+	parser_render.add_argument('file', type=argparse.FileType('r'), help="Shader file")
+	parser_render.add_argument('--resolution', type=parse_resolution, default=(480, 270), help="Resolution")
+	parser_render.add_argument('--tile-size', type=parse_resolution, help="Tile size")
+	parser_render.add_argument('--fps', type=int, help="Render frame rate")
+	parser_render.add_argument('--render-video', help="Path to rendered video file")
+	parser_render.add_argument('--render-video-fps', type=int, help="Video frame rate")
+	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
+	parser_render.add_argument('--quiet', action='store_true', help="Queit")
+
+	args = parser.parse_args()
+
+	globals()[args.command](args)
+
+
 if __name__ == "__main__":
 	main()
-

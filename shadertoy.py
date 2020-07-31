@@ -888,10 +888,6 @@ def main():
 	glut.glutInitWindowSize(*options.resolution);
 	glut.glutCreateWindow("Shadertoy")
 
-	def mouse(button, state, x, y):
-		print(button, state, x, y)
-
-
 	renderer = Renderer(json.load(options.file), options)
 	glut.glutDisplayFunc(renderer.render_display)
 	#glut.glutReshapeFunc(renderer.reshape)

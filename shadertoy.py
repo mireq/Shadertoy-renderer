@@ -43,7 +43,7 @@ uniform vec2      iTileOffset;           // offset of tile
 
 void main()
 {
-	vec4 color = vec4(0.0,0.0,0.0,1.0);
+	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
 	mainImage(color, gl_FragCoord.xy + iTileOffset);
 	color.w = 1.0;
 	gl_FragColor = color;
@@ -206,13 +206,10 @@ class MediaSource(object):
 
 
 class Shader(object):
-	def __init__(self, vertex, fragment, base=None):
+	def __init__(self, vertex, fragment, base=None, name=None):
 		self.__base = base
+		self.__name = name or '<unnamed>'
 		f_prefix = 'file://'
-		if vertex.startswith(f_prefix):
-			vertex = self.__load_code_from_file(vertex[len(f_prefix):])
-		if fragment.startswith(f_prefix):
-			fragment = self.__load_code_from_file(fragment[len(f_prefix):])
 		self.program = gl.glCreateProgram()
 		vertex_shader = gl.glCreateShader(gl.GL_VERTEX_SHADER)
 		fragment_shader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
@@ -236,14 +233,14 @@ class Shader(object):
 		gl.glCompileShader(shader)
 		if not gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS):
 			error = gl.glGetShaderInfoLog(shader).decode()
-			raise RuntimeError("Shader not compiled: %s" % error)
+			raise RuntimeError("Shader %s not compiled: %s" % (self.__name, error))
 		gl.glAttachShader(self.program, shader)
 
 	def __link_shader(self):
 		gl.glLinkProgram(self.program)
 		if not gl.glGetProgramiv(self.program, gl.GL_LINK_STATUS):
 			error = gl.glGetProgramInfoLog(self.program).decode()
-			raise RuntimeError("Shader not linked: %s" % error)
+			raise RuntimeError("Shader %s not linked: %s" % (self.__name, error))
 
 
 class FrameRateControllerResult(object):
@@ -495,7 +492,7 @@ class RenderPass(object):
 			raise NotImplementedError("Shader pass %s not implemented" % pass_definition['type'])
 
 	def make_shader(self):
-		shader = Shader(self.get_vertex_shader(), self.get_fragment_shader())
+		shader = Shader(self.get_vertex_shader(), self.get_fragment_shader(), name=self.name)
 		shader.use()
 
 		stride = self.renderer.vertex_surface.strides[0]
@@ -695,6 +692,8 @@ class Renderer(object):
 		for render_pass_definition in shader_definition['renderpass']:
 			if render_pass_definition['type'] == 'common':
 				self.common = render_pass_definition['code']
+				if self.common.startswith('file://'):
+					self.common = load_from_file(self.common[len('file://'):], self.options.shader_filename, binary=False)
 
 		for render_pass_definition in shader_definition['renderpass']:
 			if render_pass_definition['type'] == 'common':

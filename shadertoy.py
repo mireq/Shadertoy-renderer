@@ -4,6 +4,7 @@ import collections
 import contextlib
 import ctypes
 import enum
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+import urllib.request
 
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
@@ -23,6 +25,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 NR_CHANNELS = 4
+CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'shadertoy')
 
 
 FRAGMENT_SHADER_TEMPLATE = """#version 130
@@ -140,6 +143,25 @@ def open_asset(path, base=None):
 			yield fp
 		finally:
 			fp.close()
+	elif path.startswith('/'):
+		basename = os.path.basename(path)
+		cache_dir = os.path.join(CACHE_DIR, 'assets')
+		prefix = hashlib.sha1(path[:-len(basename)].encode('utf-8')).hexdigest()
+		basename = prefix + '_' + basename
+		cached_name = os.path.join(cache_dir, basename)
+		try:
+			fp = open(cached_name, 'rb')
+			yield fp
+		except FileNotFoundError:
+			try:
+				os.makedirs(cache_dir)
+			except FileExistsError:
+				pass
+			urllib.request.urlretrieve('https://www.shadertoy.com' + path, cached_name)
+			fp = open(cached_name, 'rb')
+			yield fp
+		finally:
+			fp.close
 	else:
 		raise NotImplementedError()
 

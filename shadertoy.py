@@ -924,10 +924,10 @@ def extract_sources(args):
 				continue
 			basename = slugify(renderpass['name'], existing_names)
 			existing_names.add(basename)
-			filename = to_local_filename(basename + '.vert', args.file.name)
+			filename = to_local_filename(basename + '.frag', args.file.name)
 			with open(filename, 'w') as fp:
 				fp.write(renderpass['code'])
-			renderpass['code'] = 'file://' + basename + '.vert'
+			renderpass['code'] = 'file://' + basename + '.frag'
 		with open(tmp_filename, 'w') as fp:
 			json.dump(shader, fp, indent='\t')
 		os.rename(tmp_filename, args.file.name)

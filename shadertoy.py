@@ -785,8 +785,8 @@ class Renderer(object):
 
 		fps = 1.0 / statistics.mean(self.frame_durations)
 		fps_text = f'{fps:8.8}'
-		hour = uniforms['time'] // 3600
-		minute = (uniforms['time'] - hour * 3600) // 60
+		hour = int(uniforms['time']) // 3600
+		minute = (int(uniforms['time']) - hour * 3600) // 60
 		second = (uniforms['time'] - hour * 3600 - minute * 60)
 
 		if not self.options.quiet:

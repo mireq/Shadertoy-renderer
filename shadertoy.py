@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+import urllib.parse
 import urllib.request
 
 import OpenGL.GL as gl
@@ -901,6 +902,14 @@ def parse_resolution(val):
 	return (width, height)
 
 
+def parse_shadertoy_url(val):
+	val = val.split('?')[0]
+	match = re.match(r'https://www.shadertoy.com/view/(\w+)', val)
+	if match is None:
+		raise argparse.ArgumentTypeError("Wrong URL, expected https://www.shadertoy.com/view/code")
+	return match.group(1)
+
+
 def render(args):
 	options = RendererOptions(args)
 
@@ -961,6 +970,23 @@ def extract_sources(args):
 		raise
 
 
+def download(args):
+	data = {'s': json.dumps({'shaders': [args.url]})}
+	data = urllib.parse.urlencode(data).encode('ascii')
+	req = urllib.request.Request("https://www.shadertoy.com/shadertoy")
+	req.add_header('Referer', 'https://www.shadertoy.com/view/' + args.url)
+	try:
+		with urllib.request.urlopen(req, data) as f:
+			json_data = json.loads(f.read().decode('utf-8'))
+			if not json_data:
+				raise RuntimeError("Shader not found")
+			json.dump(json_data[0], args.file, indent='\t')
+	except Exception:
+		args.file.close()
+		os.unlink(args.file.name)
+		raise
+
+
 def main():
 	parser = argparse.ArgumentParser(description="Shadertoy tool")
 	subparsers = parser.add_subparsers(help="Command", dest='command')
@@ -978,6 +1004,10 @@ def main():
 
 	parser_extract_sources = subparsers.add_parser('extract_sources', help="Extract shader sources")
 	parser_extract_sources.add_argument('file', type=argparse.FileType('r'), help="Shader file")
+
+	parser_extract_sources = subparsers.add_parser('download', help="Download shader from shadertoy.com")
+	parser_extract_sources.add_argument('url', type=parse_shadertoy_url, help="Shadertoy URL")
+	parser_extract_sources.add_argument('file', type=argparse.FileType('w'), help="Output filename")
 
 	args = parser.parse_args()
 

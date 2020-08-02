@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 NR_CHANNELS = 4
 CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'shadertoy')
 
+COMMON_INPUTS = """#version 130
 
-FRAGMENT_SHADER_TEMPLATE = """#version 130
+#define HW_PERFORMANCE
 
 uniform vec3      iResolution;           // viewport resolution (in pixels)
 uniform float     iTime;                 // shader playback time (in seconds)
@@ -43,18 +44,43 @@ uniform vec4      iMouse;                // mouse pixel coords. xy: current (if 
 uniform vec4      iDate;                 // (year, month, day, time in seconds)
 uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
 uniform vec2      iTileOffset;           // offset of tile
-%s
+"""
 
-%s
 
-void main()
-{
+IMAGE_FRAGMENT_SHADER_TEMPLATE = COMMON_INPUTS + """
+{sampler}
+
+void mainImage(out vec4 c, in vec2 f);
+
+{common}
+{code}
+
+out vec4 outColor;
+
+void main(void)
+{{
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
 	mainImage(color, gl_FragCoord.xy + iTileOffset);
-	//color.w = 1.0;
-	gl_FragColor = color;
-}
+	color.w = 1.0;
+	outColor = color;
+}}
+"""
+BUFFER_FRAGMENT_SHADER_TEMPLATE = COMMON_INPUTS + """
+{sampler}
 
+void mainImage(out vec4 c, in vec2 f);
+
+{common}
+{code}
+
+out vec4 outColor;
+
+void main(void)
+{{
+	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
+	mainImage(color, gl_FragCoord.xy + iTileOffset);
+	outColor = color;
+}}
 """
 
 IDENTITY_VERTEX_SHADER = """#version 130
@@ -525,6 +551,8 @@ class KeyboardInput(Input):
 
 
 class RenderPass(object):
+	_fragment_shader_template = None
+
 	def __init__(self, renderer, pass_definition):
 		self.renderer = renderer
 		self.outputs = pass_definition['outputs']
@@ -590,7 +618,7 @@ class RenderPass(object):
 			if isinstance(i_channel, CubeMapInput):
 				i_channels[i_channel.channel] = 'samplerCube'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
-		return FRAGMENT_SHADER_TEMPLATE % (sampler_code, self.renderer.common + '\n' + self.code)
+		return self._fragment_shader_template.format(sampler=sampler_code, common=self.renderer.common, code=self.code)
 
 	def update_uniforms(self, inputs):
 		self.shader.use()
@@ -653,6 +681,7 @@ class RenderPass(object):
 
 class ImageRenderPass(RenderPass):
 	_framebuffer_internal_format = gl.GL_RGBA
+	_fragment_shader_template = IMAGE_FRAGMENT_SHADER_TEMPLATE
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -695,6 +724,7 @@ class ImageRenderPass(RenderPass):
 
 class BufferRenderPass(ImageRenderPass):
 	_framebuffer_internal_format = gl.GL_RGBA32F
+	_fragment_shader_template = BUFFER_FRAGMENT_SHADER_TEMPLATE
 
 
 class RendererOptions(object):

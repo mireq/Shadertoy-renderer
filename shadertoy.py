@@ -51,7 +51,7 @@ void main()
 {
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
 	mainImage(color, gl_FragCoord.xy + iTileOffset);
-	color.w = 1.0;
+	//color.w = 1.0;
 	gl_FragColor = color;
 }
 
@@ -453,7 +453,7 @@ class BufferInput(TextureInput):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.width, self.height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.width, self.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
 		self._setup_sampler(gl.GL_TEXTURE_2D)
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.texture, 0);
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
@@ -620,7 +620,7 @@ class RenderPass(object):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
@@ -629,7 +629,7 @@ class RenderPass(object):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.tile_w, self.renderer.options.tile_h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.tile_w, self.renderer.options.tile_h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
@@ -652,7 +652,7 @@ class RenderPass(object):
 
 
 class ImageRenderPass(RenderPass):
-	_framebuffer_internal_format = gl.GL_RGB
+	_framebuffer_internal_format = gl.GL_RGBA
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)

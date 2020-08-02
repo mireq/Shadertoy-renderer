@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import argparse
+import array
 import collections
 import contextlib
 import ctypes
@@ -546,11 +547,9 @@ class RenderPass(object):
 		shader = Shader(self.get_vertex_shader(), self.get_fragment_shader(), name=self.name)
 		shader.use()
 
-		stride = self.renderer.vertex_surface.strides[0]
-		offset = ctypes.c_void_p(0)
 		gl.glEnableVertexAttribArray(shader.get_attribute("position"))
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
-		gl.glVertexAttribPointer(shader.get_attribute("position"), 2, gl.GL_FLOAT, False, stride, offset)
+		gl.glVertexAttribPointer(shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.renderer.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
 
 		gl.glUniform3f(shader.get_uniform("iResolution"), float(self.renderer.options.w), float(self.renderer.options.h), float(0))
 
@@ -581,9 +580,9 @@ class RenderPass(object):
 			elif key == 'frame':
 				gl.glUniform1i(self.shader.get_uniform("iFrame"), val)
 			elif key == 'channel_time':
-				gl.glUniform1fv(self.shader.get_uniform("iChannelTime"), NR_CHANNELS, np.array(val, np.float32).nbytes)
+				gl.glUniform1fv(self.shader.get_uniform("iChannelTime"), NR_CHANNELS, val)
 			elif key == 'channel_resolution':
-				gl.glUniform3fv(self.shader.get_uniform("iChannelResolution"), NR_CHANNELS, np.array(val, np.float32).nbytes)
+				gl.glUniform3fv(self.shader.get_uniform("iChannelResolution"), NR_CHANNELS, val)
 			elif key == 'mouse':
 				gl.glUniform4f(self.shader.get_uniform("iMouse"), *val)
 			else:
@@ -701,20 +700,18 @@ class RendererOptions(object):
 class Renderer(object):
 	def __init__(self, shader_definition, options):
 		self.options = options
-		self.vertex_surface = np.array([(-1,+1), (+1,+1), (-1,-1), (+1,-1)], np.float32)
+		self.vertex_surface_data = array.array('f', [-1,+1,+1,+1,-1,-1,+1,-1])
 		self.vertex_surface_buffer = gl.glGenBuffers(1)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
-		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface.nbytes, self.vertex_surface, gl.GL_DYNAMIC_DRAW)
+		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface_data.itemsize * len(self.vertex_surface_data), self.vertex_surface_data.tobytes(), gl.GL_DYNAMIC_DRAW)
 
 		self.shader = Shader(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER)
 
 		self.shader.use()
-		stride = self.vertex_surface.strides[0]
-		offset = ctypes.c_void_p(0)
 		gl.glBindVertexArray(gl.glGenVertexArrays(1))
 		gl.glEnableVertexAttribArray(self.shader.get_attribute("position"))
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
-		gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, stride, offset)
+		gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
 
 		self.image_pack_buffer = gl.glGenBuffers(1)
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)

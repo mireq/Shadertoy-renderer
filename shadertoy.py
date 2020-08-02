@@ -325,7 +325,7 @@ class Input(object):
 		elif input_definition['type'] == 'buffer':
 			return BufferInput(renderer, input_definition)
 		elif input_definition['type'] == 'keyboard':
-			return DummyInput(renderer, input_definition['channel'])
+			return KeyboardInput(renderer, input_definition)
 		else:
 			raise NotImplementedError("Input type %s not implemented" % input_definition['type'])
 
@@ -470,6 +470,34 @@ class BufferInput(TextureInput):
 		if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
 			gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+		return Texture(gl.GL_TEXTURE_2D, self.texture)
+
+
+class KeyboardInput(Input):
+	def __init__(self, renderer, input_definition):
+		super().__init__(renderer, input_definition)
+		self.texture = None
+		self.width = 256
+		self.height = 3
+
+	def load_texture(self):
+		if self.texture is None:
+			self.texture = gl.glGenTextures(1)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_R, gl.GL_CLAMP_TO_EDGE)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB8, self.width, self.height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+	def get_resolution(self):
+		return [self.width, self.height, 1]
+
+	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.texture)
 
 

@@ -480,6 +480,8 @@ class KeyboardInput(Input):
 		self.texture = None
 		self.width = 256
 		self.height = 3
+		self.keyboard_status = array.array('B', [0] * self.width * self.height)
+		self.changed_keyboard = False
 
 	def load_texture(self):
 		if self.texture is None:
@@ -491,15 +493,34 @@ class KeyboardInput(Input):
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_R, gl.GL_CLAMP_TO_EDGE)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB8, self.width, self.height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
-		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RED, self.width, self.height, 0, gl.GL_RED, gl.GL_UNSIGNED_BYTE, None)
+		if self.changed_keyboard:
+			self.changed_keyboard = False
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RED, self.width, self.height, 0, gl.GL_RED, gl.GL_UNSIGNED_BYTE, self.keyboard_status.tobytes())
+			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
 	def get_resolution(self):
 		return [self.width, self.height, 1]
 
 	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.texture)
+
+	def keyboard(self, key, pressed): # pylint: disable=unused-argument
+		if not pressed:
+			key = ord(key)
+			if key <= 255:
+				self.keyboard_status[key + 0*256] = 0
+				self.keyboard_status[key + 1*256] = 0
+
+		for key in self.renderer.pressed_keys:
+			key = ord(key)
+			if key > 255:
+				continue
+			self.keyboard_status[key + 0*256] = 255
+			self.keyboard_status[key + 1*256] = 255
+			self.keyboard_status[key + 2*256] = 255
+		self.changed_keyboard = True
 
 
 class RenderPass(object):
@@ -736,6 +757,7 @@ class Renderer(object):
 		self.frame_durations = []
 		self.mouse_state = [0, 0, 0, 0]
 		self.mouse_pressed = False
+		self.pressed_keys = set()
 
 		for render_pass_definition in shader_definition['renderpass']:
 			if render_pass_definition['type'] == 'common':
@@ -790,10 +812,22 @@ class Renderer(object):
 	def reshape(self, width, height):
 		gl.glViewport(0, 0, width, height)
 
-	def keyboard(self, key, x, y):
+	def keyboard_down(self, key, x, y):
 		if key == b'\x1b':
 			self.quit()
 			sys.exit()
+		self.pressed_keys.add(key)
+		for rp in self.render_passes:
+			for rp_input in rp.inputs:
+				if isinstance(rp_input, KeyboardInput):
+					rp_input.keyboard(key, True)
+
+	def keyboard_up(self, key, x, y):
+		self.pressed_keys.remove(key)
+		for rp in self.render_passes:
+			for rp_input in rp.inputs:
+				if isinstance(rp_input, KeyboardInput):
+					rp_input.keyboard(key, False)
 
 	def mouse(self, button, state, x, y):
 		self.mouse_pressed = state == glut.GLUT_DOWN
@@ -952,7 +986,8 @@ def render(args):
 	#glut.glutReshapeFunc(renderer.reshape)
 	glut.glutMouseFunc(renderer.mouse)
 	glut.glutMotionFunc(renderer.mouse_motion)
-	glut.glutKeyboardFunc(renderer.keyboard)
+	glut.glutKeyboardFunc(renderer.keyboard_down)
+	glut.glutKeyboardUpFunc(renderer.keyboard_up)
 	#glut.glutIdleFunc(renderer.idle)
 	glut.glutReshapeWindow(*options.resolution);
 

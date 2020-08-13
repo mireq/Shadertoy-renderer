@@ -559,9 +559,12 @@ class RenderPass(object):
 		self.inputs = []
 		self.name = pass_definition['name']
 		self.type = pass_definition['type']
-		if len(self.outputs) != 1:
-			raise NotImplementedError("Pass with %d outputs not implemented" % len(outputs))
-		self.output_id = self.outputs[0]['id']
+		if len(self.outputs) > 1:
+			raise NotImplementedError("Pass with %d outputs not implemented" % len(self.outputs))
+		if len(self.outputs) == 1:
+			self.output_id = self.outputs[0]['id']
+		else:
+			self.output_id = None
 		self.code = pass_definition['code']
 		if self.code.startswith('file://'):
 			self.code = load_from_file(self.code[len('file://'):], self.renderer.options.shader_filename, binary=False)

@@ -32,7 +32,7 @@ CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'shadertoy')
 
 COMMON_INPUTS = """#version 130
 
-#define HW_PERFORMANCE
+#define HW_PERFORMANCE 1
 
 uniform vec3      iResolution;           // viewport resolution (in pixels)
 uniform float     iTime;                 // shader playback time (in seconds)

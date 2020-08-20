@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 NR_CHANNELS = 4
 CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'shadertoy')
 
-COMMON_INPUTS = """#version 130
+COMMON_INPUTS = """#version 330
 
 #define HW_PERFORMANCE 1
 
@@ -47,6 +47,44 @@ uniform vec2      iTileOffset;           // offset of tile
 """
 
 
+#IMAGE_FRAGMENT_SHADER_TEMPLATE = COMMON_INPUTS + """
+#{sampler}
+#
+#void mainImage(out vec4 c, in vec2 f);
+#float iTime;
+#
+#{common}
+#{code}
+#
+#out vec4 outColor;
+#
+#float rnd21(vec2 p)
+#{{
+#	vec3 p3  = fract(vec3(p.xyx) * .1031);
+#	p3 += dot(p3, p3.yzx + 33.33);
+#	return fract((p3.x + p3.y) * p3.z);
+#}}
+#
+#void main(void)
+#{{
+#	iTime = riTime;
+#	vec4 colorSum = vec4(0.0, 0.0, 0.0, 1.0);
+#	vec2 aaOffset;
+#
+#	for (float i = 0; i < 3; ++i) {{
+#		for (float j = 0; j < 3; ++j) {{
+#			aaOffset = vec2(i / 3.0 - 0.5 + 1/6, j / 3.0 - 0.5 + 1/6);
+#			vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
+#			mainImage(color, gl_FragCoord.xy + iTileOffset + aaOffset);
+#			color.w = 1.0;
+#			colorSum += color;
+#			iTime = riTime + (1.0 / 60.0) * (i * 3 + j) / 9.0;
+#		}}
+#	}}
+#
+#	outColor = colorSum / 9;
+#}}
+#"""
 IMAGE_FRAGMENT_SHADER_TEMPLATE = COMMON_INPUTS + """
 {sampler}
 
@@ -83,7 +121,7 @@ void main(void)
 }}
 """
 
-IDENTITY_VERTEX_SHADER = """#version 130
+IDENTITY_VERTEX_SHADER = """#version 330
 
 attribute vec2 position;
 
@@ -93,7 +131,7 @@ void main()
 }
 """
 
-TEXTURE_VERTEX_SHADER = """#version 130
+TEXTURE_VERTEX_SHADER = """#version 330
 
 attribute vec2 position;
 varying vec2 texcoord;
@@ -103,7 +141,7 @@ void main()
 	texcoord = position * vec2(0.5, 0.5) + vec2(0.5);
 }"""
 
-TEXTURE_FRAGMENT_SHADER = """#version 130
+TEXTURE_FRAGMENT_SHADER = """#version 330
 
 varying vec2 texcoord;
 uniform sampler2D texture;
@@ -1009,8 +1047,8 @@ def render(args):
 	os.environ['vblank_mode'] = '0'
 
 	glut.glutInit()
-	#glut.glutInitContextVersion(3, 3)
-	#glut.glutInitContextProfile(glut.GLUT_CORE_PROFILE)
+	glut.glutInitContextVersion(3, 3)
+	glut.glutInitContextProfile(glut.GLUT_CORE_PROFILE)
 	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
 	glut.glutInitWindowSize(*options.resolution);
 	glut.glutCreateWindow("Shadertoy")

@@ -30,12 +30,14 @@ logger = logging.getLogger(__name__)
 NR_CHANNELS = 4
 CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'shadertoy')
 
-COMMON_INPUTS = """#version 330
-
+COMMON_DEFINITIONS = """
+#define HW_PERFORMANCE 1
+"""
+COMMON_INPUTS = """
 #define HW_PERFORMANCE 1
 
 uniform vec3      iResolution;           // viewport resolution (in pixels)
-uniform float     iTime;                 // shader playback time (in seconds)
+uniform float   xxiTime;                 // shader playback time (in seconds)
 uniform float     iTimeDelta;            // render time (in seconds)
 uniform int       iFrame;                // shader playback frame
 uniform float     iChannelTime[4];       // channel playback time (in seconds)
@@ -44,6 +46,12 @@ uniform vec4      iMouse;                // mouse pixel coords. xy: current (if 
 uniform vec4      iDate;                 // (year, month, day, time in seconds)
 uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
 uniform vec2      iTileOffset;           // offset of tile
+"""
+SIMPLE_INPUTS = """
+#define iTime xxiTime
+"""
+ANTIALIAS_INPUTS = """
+float iTime = 0.0;
 """
 
 
@@ -85,8 +93,37 @@ uniform vec2      iTileOffset;           // offset of tile
 #	outColor = colorSum / 9;
 #}}
 #"""
-IMAGE_FRAGMENT_SHADER_TEMPLATE = COMMON_INPUTS + """
+RENDER_MAIN_TEMPLATE = """
+	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
+	mainImage(color, gl_FragCoord.xy + iTileOffset);
+"""
+RENDER_MAIN_ANTIALIAS_TEMPLATE = """
+	iTime = xxiTime;
+	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
+	vec2 aaOffset;
+	vec3 rnd = vec3(gl_FragCoord.xy + iTileOffset, xxiTime);
+	rnd = fract(rnd * .1031);
+	rnd += dot(rnd, rnd.yzx + 33.33);
+	float timeOffset = fract((rnd.x + rnd.y) * rnd.z) / 60.0 / ({x} * {y});
+
+	for (int i = 0; i < {x}; ++i) {{
+		for (int j = 0; j < {y}; ++j) {{
+			aaOffset = vec2(float(i) / {x} - 0.5 + 0.5/{x}, float(j) / {y} - 0.5 + 0.5/{y});
+			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
+			mainImage(passColor, gl_FragCoord.xy + iTileOffset + aaOffset);
+			passColor.w = 1.0;
+			color += passColor;
+			iTime = xxiTime + (1.0 / 60.0) * (i * {x} + j) / ({x} * {y}) + timeOffset;
+		}}
+	}}
+
+	color = color / ({x} * {y});
+"""
+IMAGE_FRAGMENT_SHADER_TEMPLATE = """#version 330
+{inputs}
+{redefinitions}
 {sampler}
+{definitions}
 
 void mainImage(out vec4 c, in vec2 f);
 
@@ -97,14 +134,16 @@ out vec4 outColor;
 
 void main(void)
 {{
-	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
-	mainImage(color, gl_FragCoord.xy + iTileOffset);
+	{render_main}
 	color.w = 1.0;
 	outColor = color;
 }}
 """
-BUFFER_FRAGMENT_SHADER_TEMPLATE = COMMON_INPUTS + """
+BUFFER_FRAGMENT_SHADER_TEMPLATE = """#version 330
+{inputs}
+{redefinitions}
 {sampler}
+{definitions}
 
 void mainImage(out vec4 c, in vec2 f);
 
@@ -115,8 +154,7 @@ out vec4 outColor;
 
 void main(void)
 {{
-	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
-	mainImage(color, gl_FragCoord.xy + iTileOffset);
+	{render_main}
 	outColor = color;
 }}
 """
@@ -659,13 +697,28 @@ class RenderPass(object):
 			if isinstance(i_channel, CubeMapInput):
 				i_channels[i_channel.channel] = 'samplerCube'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
-		return self._fragment_shader_template.format(sampler=sampler_code, common=self.renderer.common, code=self.code)
+		has_antialias = self.renderer.options.antialias != (1, 1)
+		main = RENDER_MAIN_TEMPLATE
+		if has_antialias:
+			main = RENDER_MAIN_ANTIALIAS_TEMPLATE.format(
+				x=self.renderer.options.antialias[0],
+				y=self.renderer.options.antialias[1],
+			)
+		return self._fragment_shader_template.format(
+			inputs=COMMON_INPUTS,
+			definitions=COMMON_DEFINITIONS,
+			render_main=main,
+			redefinitions=ANTIALIAS_INPUTS if has_antialias else SIMPLE_INPUTS,
+			sampler=sampler_code,
+			common=self.renderer.common,
+			code=self.code
+		)
 
 	def update_uniforms(self, inputs):
 		self.shader.use()
 		for key, val in inputs.items():
 			if key == 'time':
-				gl.glUniform1f(self.shader.get_uniform("iTime"), val)
+				gl.glUniform1f(self.shader.get_uniform("xxiTime"), val)
 			elif key == 'time_delta':
 				gl.glUniform1f(self.shader.get_uniform("iTimeDelta"), val)
 			elif key == 'frame':
@@ -788,6 +841,7 @@ class RendererOptions(object):
 		if args.render_video and self.render_video_fps is None:
 			self.render_video_fps = self.fps
 		self.quiet = args.quiet
+		self.antialias = args.antialias
 
 
 class Renderer(object):
@@ -1133,6 +1187,7 @@ def main():
 	parser_render.add_argument('--render-video-fps', type=int, help="Video frame rate")
 	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
 	parser_render.add_argument('--quiet', action='store_true', help="Queit")
+	parser_render.add_argument('--antialias', type=parse_resolution, default=(1, 1), help="Antialiasing")
 
 	parser_extract_sources = subparsers.add_parser('extract_sources', help="Extract shader sources")
 	parser_extract_sources.add_argument('file', type=argparse.FileType('r'), help="Shader file")

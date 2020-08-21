@@ -113,7 +113,7 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 			mainImage(passColor, gl_FragCoord.xy + iTileOffset + aaOffset);
 			passColor.w = 1.0;
 			color += passColor;
-			iTime = xxiTime + (1.0 / 60.0) * (i * {x} + j) / ({x} * {y}) + timeOffset;
+			iTime = xxiTime + (1.0 / 60.0) * (i * {y} + j) / ({x} * {y}) + timeOffset;
 		}}
 	}}
 

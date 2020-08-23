@@ -720,8 +720,8 @@ class RenderPass(object):
 	def make_tile_framebuffer(self, internal_format=None):
 		if internal_format is None:
 			internal_format = self._framebuffer_internal_format
-		image, back_image, tile_image = gl.glGenTextures(3)
-		framebuffer, back_framebuffer, tile_framebuffer = gl.glGenFramebuffers(3)
+		image, tile_image = gl.glGenTextures(2)
+		framebuffer, tile_framebuffer = gl.glGenFramebuffers(2)
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
@@ -729,15 +729,6 @@ class RenderPass(object):
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
-		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
-
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, back_framebuffer);
-		gl.glBindTexture(gl.GL_TEXTURE_2D, back_image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
-		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, back_image, 0);
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
 
@@ -750,7 +741,7 @@ class RenderPass(object):
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
 
-		return image, framebuffer, back_image, back_framebuffer, tile_image, tile_framebuffer
+		return image, framebuffer, tile_image, tile_framebuffer
 
 	def bind_inputs(self):
 		for input_channel in self.inputs:
@@ -771,7 +762,7 @@ class ImageRenderPass(RenderPass):
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-		image, framebuffer, back_image, back_framebuffer, tile_image, tile_framebuffer = self.make_tile_framebuffer()
+		image, framebuffer, tile_image, tile_framebuffer = self.make_tile_framebuffer()
 		self.framebuffer = framebuffer
 		self.image = image
 		self.tile_image = tile_image

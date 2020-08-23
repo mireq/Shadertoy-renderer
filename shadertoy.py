@@ -55,44 +55,6 @@ float iTime = 0.0;
 """
 
 
-#IMAGE_FRAGMENT_SHADER_TEMPLATE = COMMON_INPUTS + """
-#{sampler}
-#
-#void mainImage(out vec4 c, in vec2 f);
-#float iTime;
-#
-#{common}
-#{code}
-#
-#out vec4 outColor;
-#
-#float rnd21(vec2 p)
-#{{
-#	vec3 p3  = fract(vec3(p.xyx) * .1031);
-#	p3 += dot(p3, p3.yzx + 33.33);
-#	return fract((p3.x + p3.y) * p3.z);
-#}}
-#
-#void main(void)
-#{{
-#	iTime = riTime;
-#	vec4 colorSum = vec4(0.0, 0.0, 0.0, 1.0);
-#	vec2 aaOffset;
-#
-#	for (float i = 0; i < 3; ++i) {{
-#		for (float j = 0; j < 3; ++j) {{
-#			aaOffset = vec2(i / 3.0 - 0.5 + 1/6, j / 3.0 - 0.5 + 1/6);
-#			vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
-#			mainImage(color, gl_FragCoord.xy + iTileOffset + aaOffset);
-#			color.w = 1.0;
-#			colorSum += color;
-#			iTime = riTime + (1.0 / 60.0) * (i * 3 + j) / 9.0;
-#		}}
-#	}}
-#
-#	outColor = colorSum / 9;
-#}}
-#"""
 RENDER_MAIN_TEMPLATE = """
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
 	mainImage(color, gl_FragCoord.xy + iTileOffset);
@@ -196,6 +158,34 @@ FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_strea
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
 FRAME_DURATION_AVERAGE = 60
+
+
+class Blitter(object):
+	def __init__(self, src_framebuffer=None, target_framebuffer=None):
+		self.src_framebuffer = src_framebuffer
+		self.target_framebuffer = target_framebuffer
+		if self.src_framebuffer is None:
+			self.src_framebuffer = gl.glGenFramebuffers(1)
+		if self.target_framebuffer is None:
+			self.target_framebuffer = gl.glGenFramebuffers(1)
+
+	def set_src_texture(self, texture):
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.src_framebuffer);
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, texture, 0);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+
+	def set_target_texture(self, texture):
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.target_framebuffer);
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, texture, 0);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+
+	def blit(self, src_rect, target_rect):
+		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.src_framebuffer)
+		gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, self.target_framebuffer)
+		args = list(src_rect) + list(target_rect) + [gl.GL_COLOR_BUFFER_BIT, gl.GL_NEAREST]
+		gl.glBlitFramebuffer(*args)
+		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
+		gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
 
 
 def slugify(name, existing_names=None):
@@ -540,36 +530,31 @@ class BufferInput(TextureInput):
 		self.width = self.renderer.options.w
 		self.height = self.renderer.options.h
 		self.id = input_definition['id']
-		self.input_framebuffer = None
-		self.framebuffer = 0
 		self.texture = 0
+		self.blitter = None
 
 	def load_texture(self):
 		if self.texture != 0:
 			return
 		render_pass = self.renderer.get_render_pass_by_id(self.id)
-		self.input_framebuffer = render_pass.get_framebuffer()
 
-		self.framebuffer = gl.glGenFramebuffers(1)
 		self.texture = gl.glGenTextures(1)
 
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer);
+		self.blitter = Blitter(render_pass.get_framebuffer())
+
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
 		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.width, self.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
 		self._setup_sampler(gl.GL_TEXTURE_2D)
-		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.texture, 0);
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+		self.blitter.set_target_texture(self.texture)
 
 	def get_resolution(self):
 		return [self.width, self.height, 1]
 
 	def get_texture(self):
-		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.input_framebuffer)
-		gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, self.framebuffer)
-		gl.glBlitFramebuffer(0, 0, self.width, self.height, 0, 0, self.width, self.height, gl.GL_COLOR_BUFFER_BIT, gl.GL_NEAREST)
-		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
-		gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
+		rect = [0, 0, self.width, self.height]
+		self.blitter.blit(rect, rect)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
 		if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
 			gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
@@ -735,10 +720,8 @@ class RenderPass(object):
 	def make_tile_framebuffer(self, internal_format=None):
 		if internal_format is None:
 			internal_format = self._framebuffer_internal_format
-		image = gl.glGenTextures(1)
-		framebuffer = gl.glGenFramebuffers(1)
-		tile_image = gl.glGenTextures(1)
-		tile_framebuffer = gl.glGenFramebuffers(1)
+		image, back_image, tile_image = gl.glGenTextures(3)
+		framebuffer, back_framebuffer, tile_framebuffer = gl.glGenFramebuffers(3)
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
@@ -746,6 +729,15 @@ class RenderPass(object):
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
+
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, back_framebuffer);
+		gl.glBindTexture(gl.GL_TEXTURE_2D, back_image)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, back_image, 0);
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
 
@@ -758,7 +750,7 @@ class RenderPass(object):
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
 		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
 
-		return image, framebuffer, tile_image, tile_framebuffer
+		return image, framebuffer, back_image, back_framebuffer, tile_image, tile_framebuffer
 
 	def bind_inputs(self):
 		for input_channel in self.inputs:
@@ -779,7 +771,7 @@ class ImageRenderPass(RenderPass):
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-		framebuffer, image, tile_image, tile_framebuffer = self.make_tile_framebuffer()
+		image, framebuffer, back_image, back_framebuffer, tile_image, tile_framebuffer = self.make_tile_framebuffer()
 		self.framebuffer = framebuffer
 		self.image = image
 		self.tile_image = tile_image

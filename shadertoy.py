@@ -152,8 +152,7 @@ void main()
 VIDEO_FRAGMENT_SHADER = """#version 330
 
 varying vec2 texcoord;
-uniform bool first_frame;
-uniform bool last_frame;
+uniform int current_frame;
 uniform int number_of_frames;
 uniform sampler2D input_buffer;
 uniform sampler2D output_buffer;
@@ -1027,10 +1026,15 @@ class Renderer(object):
 
 		frame_start = time.monotonic()
 		for render_pass in self.render_passes:
-			render_pass.render()
+			if not isinstance(render_pass, VideoRenderPass):
+				render_pass.render()
 		gl.glFinish()
 		frame_end = time.monotonic()
 		self.frame_durations = self.frame_durations[:FRAME_DURATION_AVERAGE-1] + [frame_end - frame_start]
+
+		for render_pass in self.render_passes:
+			if isinstance(render_pass, VideoRenderPass):
+				render_pass.render()
 
 		fps = 1.0 / statistics.mean(self.frame_durations)
 		fps_text = f'{fps:8.8}'

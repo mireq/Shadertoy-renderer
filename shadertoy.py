@@ -22,7 +22,6 @@ import urllib.request
 
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
-import numpy as np
 
 
 logger = logging.getLogger(__name__)
@@ -148,6 +147,20 @@ uniform sampler2D texture;
 void main()
 {
 	gl_FragColor = texture2D(texture, texcoord);
+}
+"""
+VIDEO_FRAGMENT_SHADER = """#version 330
+
+varying vec2 texcoord;
+uniform bool first_frame;
+uniform bool last_frame;
+uniform int number_of_frames;
+uniform sampler2D input_buffer;
+uniform sampler2D output_buffer;
+
+void main()
+{
+	gl_FragColor = texture2D(input_buffer, texcoord);
 }
 """
 
@@ -611,13 +624,24 @@ class KeyboardInput(Input):
 		self.changed_keyboard = True
 
 
-class RenderPass(object):
+class BaseRenderPass(object):
+	def __init__(self, renderer):
+		self.inputs = []
+		self.renderer = renderer
+
+	def update_uniforms(self, inputs):
+		pass
+
+	def destroy(self):
+		pass
+
+
+class RenderPass(BaseRenderPass):
 	_fragment_shader_template = None
 
 	def __init__(self, renderer, pass_definition):
-		self.renderer = renderer
+		super().__init__(renderer)
 		self.outputs = pass_definition['outputs']
-		self.inputs = []
 		self.name = pass_definition['name']
 		self.type = pass_definition['type']
 		if len(self.outputs) > 1:
@@ -654,6 +678,8 @@ class RenderPass(object):
 			return ImageRenderPass(renderer, pass_definition)
 		elif pass_definition['type'] == 'buffer':
 			return BufferRenderPass(renderer, pass_definition)
+		elif pass_definition['type'] == 'video':
+			return VideoRenderPass(renderer)
 		else:
 			raise NotImplementedError("Shader pass %s not implemented" % pass_definition['type'])
 
@@ -799,6 +825,41 @@ class ImageRenderPass(RenderPass):
 		return self.framebuffer
 
 
+class VideoRenderPass(BaseRenderPass):
+	_framebuffer_internal_format = gl.GL_RGBA
+
+	def __init__(self, renderer):
+		super().__init__(renderer)
+		self.ffmpeg_feed = False
+		replacements = {
+			'ffmpeg': FFMPEG_BINARY,
+			'resolution': f'{self.renderer.options.w}x{self.renderer.options.h}',
+			'input': '-',
+			'framerate': str(self.renderer.options.render_video_fps),
+			'output': self.renderer.options.render_video,
+		}
+		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
+		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+		self.ffmpeg_feed = self.ffmpeg.stdin
+		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
+		self.current_frame = array.array('B', [0] * self.renderer.options.w * self.renderer.options.h * 3)
+
+	def render(self):
+		frame_action = self.video_framerate_controller.on_frame()
+		if frame_action.emit_frames:
+			if self.video_framerate_controller.out_fps >= self.video_framerate_controller.fps:
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer);
+				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0]);
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+				for __ in range(frame_action.emit_frames):
+					self.ffmpeg_feed.write(self.current_frame.tobytes())
+
+	def destory(self):
+		if self.ffmpeg is not None:
+			self.ffmpeg_feed.close()
+			self.ffmpeg.wait()
+
+
 class BufferRenderPass(ImageRenderPass):
 	_framebuffer_internal_format = gl.GL_RGBA32F
 	_fragment_shader_template = BUFFER_FRAGMENT_SHADER_TEMPLATE
@@ -847,12 +908,7 @@ class Renderer(object):
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)
 		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.options.pixels_count * 3, None, gl.GL_STREAM_READ)
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
-		self.current_image = np.empty((self.options.w, self.options.h, 3), dtype=np.uint8)
-		self.cumulative_image = np.zeros((self.options.w, self.options.h, 3), dtype=np.uint32)
 
-		self.video_framerate_controller = None
-		if self.options.render_video:
-			self.video_framerate_controller = FrameRateController(self.options.fps, self.options.render_video_fps)
 		self.tiles = self.__calc_tiles()
 		self.render_passes = []
 		self.render_passes_by_id = {}
@@ -882,6 +938,9 @@ class Renderer(object):
 				self.output = render_pass
 			self.render_passes.append(render_pass)
 			self.render_passes_by_id[render_pass.output_id] = render_pass
+		if self.options.render_video:
+			render_pass = RenderPass.create(self, {'type': 'video'})
+			self.render_passes.append(render_pass)
 
 		if self.output is None:
 			raise RuntimeError("Output is not defined")
@@ -896,7 +955,6 @@ class Renderer(object):
 		try:
 			gl.glViewport(0, 0, self.options.w, self.options.h)
 			self.render_frame()
-			self.write_video()
 		except Exception:
 			logger.exception("Exception in display method")
 			sys.exit()
@@ -988,35 +1046,9 @@ class Renderer(object):
 		self.last_time = self.current_time
 		self.current_time = time.monotonic()
 
-	def write_video(self):
-		if not self.options.render_video:
-			return
-		if self.ffmpeg_feed is None:
-			self.__init_video_output()
-
-		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.output.framebuffer);
-		gl.glReadPixels(0, 0, self.options.w, self.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, 0);
-
-		buffer_addr = gl.glMapBuffer(gl.GL_PIXEL_PACK_BUFFER, gl.GL_READ_ONLY)
-		ctypes.memmove(self.current_image.ctypes.data, buffer_addr, self.options.pixels_count * 3)
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
-		gl.glUnmapBuffer(gl.GL_PIXEL_PACK_BUFFER)
-		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
-
-		frame_action = self.video_framerate_controller.on_frame()
-
-		self.cumulative_image += self.current_image
-		if frame_action.emit_frames:
-			self.current_image = (self.cumulative_image / frame_action.merge_frames).astype(np.uint8)
-			for __ in range(frame_action.emit_frames):
-				self.ffmpeg_feed.write(self.current_image.tobytes())
-			self.cumulative_image = np.zeros((self.options.w, self.options.h, 3), dtype=np.uint32)
-
 	def quit(self):
-		if self.ffmpeg is not None:
-			self.ffmpeg.stdin.close()
-			self.ffmpeg.wait()
+		for render_pass in self.render_passes:
+			render_pass.destroy()
 
 	def get_render_pass_by_id(self, output_id):
 		return self.render_passes_by_id[output_id]
@@ -1035,19 +1067,6 @@ class Renderer(object):
 				)
 				tiles.append(tile)
 		return tiles
-
-	def __init_video_output(self):
-		self.ffmpeg_feed = False
-		replacements = {
-			'ffmpeg': FFMPEG_BINARY,
-			'resolution': f'{self.options.w}x{self.options.h}',
-			'input': '-',
-			'framerate': str(self.options.render_video_fps),
-			'output': self.options.render_video,
-		}
-		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
-		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-		self.ffmpeg_feed = self.ffmpeg.stdin
 
 	def __transform_mouse_coords(self, x, y):
 		window_width = glut.glutGet(glut.GLUT_WINDOW_WIDTH)

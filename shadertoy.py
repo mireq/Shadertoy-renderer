@@ -152,14 +152,26 @@ void main()
 VIDEO_FRAGMENT_SHADER = """#version 330
 
 varying vec2 texcoord;
+uniform int average_frames;
 uniform int current_frame;
-uniform int number_of_frames;
 uniform sampler2D input_buffer;
 uniform sampler2D output_buffer;
 
 void main()
 {
-	gl_FragColor = texture2D(input_buffer, texcoord);
+	vec4 color;
+	if (current_frame == 0) {
+		color = texture2D(input_buffer, texcoord);
+	}
+	else {
+		color = texture2D(input_buffer, texcoord) + texture2D(output_buffer, texcoord);
+	}
+	if (average_frames > 1) {
+		gl_FragColor = color / average_frames;
+	}
+	else {
+		gl_FragColor = color;
+	}
 }
 """
 
@@ -182,14 +194,14 @@ class Blitter(object):
 			self.target_framebuffer = gl.glGenFramebuffers(1)
 
 	def set_src_texture(self, texture):
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.src_framebuffer);
-		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, texture, 0);
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.src_framebuffer)
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, texture, 0)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
 	def set_target_texture(self, texture):
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.target_framebuffer);
-		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, texture, 0);
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.target_framebuffer)
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, texture, 0)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
 	def blit(self, src_rect, target_rect):
 		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.src_framebuffer)
@@ -748,23 +760,23 @@ class RenderPass(BaseRenderPass):
 		image, tile_image = gl.glGenTextures(2)
 		framebuffer, tile_framebuffer = gl.glGenFramebuffers(2)
 
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, image)
 		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
-		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0);
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
-		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, image, 0)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer);
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, tile_framebuffer)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, tile_image)
 		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, internal_format, self.renderer.options.tile_w, self.renderer.options.tile_h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST);
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST);
-		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0);
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
-		gl.glBindTexture(gl.GL_TEXTURE_2D, 0);
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, tile_image, 0)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
 		return image, framebuffer, tile_image, tile_framebuffer
 
@@ -774,11 +786,11 @@ class RenderPass(BaseRenderPass):
 			texture = input_channel.get_texture()
 			if texture is not None:
 				channel = input_channel.channel
-				gl.glActiveTexture(gl.GL_TEXTURE0 + channel + 1);
-				gl.glBindTexture(*texture);
+				gl.glActiveTexture(gl.GL_TEXTURE0 + channel + 1)
+				gl.glBindTexture(*texture)
 				gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), channel + 1)
-				gl.glActiveTexture(gl.GL_TEXTURE0);
-				gl.glBindTexture(texture[0], 0);
+				gl.glActiveTexture(gl.GL_TEXTURE0)
+				gl.glBindTexture(texture[0], 0)
 
 
 class ImageRenderPass(RenderPass):
@@ -801,11 +813,11 @@ class ImageRenderPass(RenderPass):
 		for tile in self.renderer.tiles:
 			gl.glUniform2f(self.shader.get_uniform("iTileOffset"), float(tile[0]), float(tile[1]))
 
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer);
-			gl.glActiveTexture(gl.GL_TEXTURE0);
-			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image);
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer)
+			gl.glActiveTexture(gl.GL_TEXTURE0)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
 			if tiling:
 				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.tile_framebuffer)
@@ -842,16 +854,64 @@ class VideoRenderPass(BaseRenderPass):
 		self.ffmpeg_feed = self.ffmpeg.stdin
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
 		self.current_frame = array.array('B', [0] * self.renderer.options.w * self.renderer.options.h * 3)
+		self.motion_blur = self.video_framerate_controller.out_fps <= self.video_framerate_controller.fps
+		self.framebuffer = None
+		self.image = None
+		self.shader = None
+		self.frame = None
+		self.current_frame_number = 0
+		if self.motion_blur:
+			self.framebuffer = gl.glGenFramebuffers(1)
+			self.image = gl.glGenTextures(1)
+
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+			gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.image, 0)
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+			self.shader = Shader(TEXTURE_VERTEX_SHADER, VIDEO_FRAGMENT_SHADER)
 
 	def render(self):
 		frame_action = self.video_framerate_controller.on_frame()
+
+		if self.motion_blur:
+			self.shader.use()
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+
+			gl.glActiveTexture(gl.GL_TEXTURE0)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.renderer.output.image)
+			gl.glUniform1i(self.shader.get_uniform("input_buffer"), 0)
+			gl.glActiveTexture(gl.GL_TEXTURE1)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
+			gl.glUniform1i(self.shader.get_uniform("output_buffer"), 1)
+			gl.glUniform1i(self.shader.get_uniform("current_frame"), self.current_frame_number)
+			gl.glUniform1i(self.shader.get_uniform("average_frames"), (self.current_frame_number if frame_action.emit_frames else 0) + 1)
+
+			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
+			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+			gl.glFinish()
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+
 		if frame_action.emit_frames:
-			if self.video_framerate_controller.out_fps >= self.video_framerate_controller.fps:
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer);
-				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0]);
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+			self.current_frame_number = 0
+			if self.motion_blur:
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0])
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_feed.write(self.current_frame.tobytes())
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+			else:
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer)
+				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0])
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+				for __ in range(frame_action.emit_frames):
+					self.ffmpeg_feed.write(self.current_frame.tobytes())
+		else:
+			self.current_frame_number += 1
 
 	def destory(self):
 		if self.ffmpeg is not None:
@@ -964,8 +1024,8 @@ class Renderer(object):
 		self.shader.use()
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 
-		gl.glActiveTexture(gl.GL_TEXTURE0);
-		gl.glBindTexture(*self.output.get_texture());
+		gl.glActiveTexture(gl.GL_TEXTURE0)
+		gl.glBindTexture(*self.output.get_texture())
 		gl.glUniform1i(self.shader.get_uniform("texture"), 0)
 
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
@@ -1110,7 +1170,7 @@ def render(args):
 	glut.glutInitContextVersion(3, 3)
 	glut.glutInitContextProfile(glut.GLUT_CORE_PROFILE)
 	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
-	glut.glutInitWindowSize(*options.resolution);
+	glut.glutInitWindowSize(*options.resolution)
 	glut.glutCreateWindow("Shadertoy")
 
 	renderer = Renderer(json.load(options.file), options)
@@ -1121,7 +1181,7 @@ def render(args):
 	glut.glutKeyboardFunc(renderer.keyboard_down)
 	glut.glutKeyboardUpFunc(renderer.keyboard_up)
 	#glut.glutIdleFunc(renderer.idle)
-	glut.glutReshapeWindow(*options.resolution);
+	glut.glutReshapeWindow(*options.resolution)
 
 	while True:
 		try:

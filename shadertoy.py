@@ -311,7 +311,7 @@ class MediaSource(object):
 		self.media_type = media_type
 		replacements = {
 			'ffprobe': FFPROBE_BINARY,
-			'input': '-',
+			'input': 'pipe:0',
 		}
 		self.__fp.seek(0)
 		cmd = build_shell_command(FFPROBE_CMDLINE, replacements)
@@ -335,8 +335,8 @@ class MediaSource(object):
 		if self.__ffmpeg is None:
 			replacements = {
 				'ffmpeg': FFMPEG_BINARY,
-				'input': '-',
-				'output': '-',
+				'input': 'pipe:0',
+				'output': 'pipe:1',
 				'filters': None,
 			}
 			if self.__vflip:
@@ -858,7 +858,7 @@ class VideoRenderPass(BaseRenderPass):
 		replacements = {
 			'ffmpeg': FFMPEG_BINARY,
 			'resolution': f'{self.renderer.options.w}x{self.renderer.options.h}',
-			'input': '-',
+			'input': 'pipe:0',
 			'framerate': str(self.renderer.options.render_video_fps),
 			'output': self.renderer.options.render_video,
 		}

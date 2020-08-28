@@ -24,6 +24,9 @@ import OpenGL.GL as gl
 import OpenGL.GLUT as glut
 
 
+# Using Dave Hoskins' hash functions (https://www.shadertoy.com/view/4djSRW)
+
+
 logger = logging.getLogger(__name__)
 
 NR_CHANNELS = 4
@@ -62,7 +65,7 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 	iTime = xxiTime;
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
 	vec2 aaOffset;
-	vec3 rnd = vec3(gl_FragCoord.xy + iTileOffset, xxiTime);
+	vec3 rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
 	rnd = fract(rnd * .1031);
 	rnd += dot(rnd, rnd.yzx + 33.33);
 	float timeOffset = fract((rnd.x + rnd.y) * rnd.z) / 60.0 / ({x} * {y});
@@ -154,6 +157,8 @@ VIDEO_FRAGMENT_SHADER = """#version 330
 varying vec2 texcoord;
 uniform int average_frames;
 uniform int current_frame;
+uniform int output_frame_number;
+uniform int dithering;
 uniform sampler2D input_buffer;
 uniform sampler2D output_buffer;
 
@@ -167,11 +172,19 @@ void main()
 		color = texture2D(input_buffer, texcoord) + texture2D(output_buffer, texcoord);
 	}
 	if (average_frames > 1) {
-		gl_FragColor = color / average_frames;
+		color = color / average_frames;
 	}
-	else {
-		gl_FragColor = color;
+
+	if (dithering > 0) {
+		vec3 rnd = fract(vec3(gl_FragCoord.xy, output_frame_number) * vec3(.1031, .1030, .0973));
+		rnd += dot(rnd, rnd.yxz+33.33);
+		rnd = fract((rnd.xxy + rnd.yxx)*rnd.zyx) - 0.5;
+		float rnd_val = rnd.x + rnd.y + rnd.z;
+		rnd = vec3(rnd.x + rnd_val, rnd.y + rnd_val, rnd.z + rnd_val) / (256.0 / float(dithering));
+		color = vec4(color.rgb + rnd, color.a);
 	}
+
+	gl_FragColor = color;
 }
 """
 
@@ -850,6 +863,7 @@ class VideoRenderPass(BaseRenderPass):
 			'output': self.renderer.options.render_video,
 		}
 		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
+		self.dithering = renderer.options.dithering
 		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
 		self.ffmpeg_feed = self.ffmpeg.stdin
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
@@ -860,7 +874,8 @@ class VideoRenderPass(BaseRenderPass):
 		self.shader = None
 		self.frame = None
 		self.current_frame_number = 0
-		if self.motion_blur:
+		self.output_frame_number = 1
+		if self.motion_blur or self.motion_blur:
 			self.framebuffer = gl.glGenFramebuffers(1)
 			self.image = gl.glGenTextures(1)
 
@@ -874,11 +889,13 @@ class VideoRenderPass(BaseRenderPass):
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
 			self.shader = Shader(TEXTURE_VERTEX_SHADER, VIDEO_FRAGMENT_SHADER)
+			self.shader.use()
+			gl.glUniform1i(self.shader.get_uniform("dithering"), self.dithering)
 
 	def render(self):
 		frame_action = self.video_framerate_controller.on_frame()
 
-		if self.motion_blur:
+		if self.motion_blur or self.dithering:
 			self.shader.use()
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 
@@ -889,6 +906,7 @@ class VideoRenderPass(BaseRenderPass):
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
 			gl.glUniform1i(self.shader.get_uniform("output_buffer"), 1)
 			gl.glUniform1i(self.shader.get_uniform("current_frame"), self.current_frame_number)
+			gl.glUniform1i(self.shader.get_uniform("output_frame_number"), self.output_frame_number)
 			gl.glUniform1i(self.shader.get_uniform("average_frames"), (self.current_frame_number if frame_action.emit_frames else 0) + 1)
 
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
@@ -898,7 +916,7 @@ class VideoRenderPass(BaseRenderPass):
 
 		if frame_action.emit_frames:
 			self.current_frame_number = 0
-			if self.motion_blur:
+			if self.motion_blur or self.dithering:
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0])
 				for __ in range(frame_action.emit_frames):
@@ -910,10 +928,11 @@ class VideoRenderPass(BaseRenderPass):
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_feed.write(self.current_frame.tobytes())
+			self.output_frame_number += 1
 		else:
 			self.current_frame_number += 1
 
-	def destory(self):
+	def destroy(self):
 		if self.ffmpeg is not None:
 			self.ffmpeg_feed.close()
 			self.ffmpeg.wait()
@@ -945,6 +964,7 @@ class RendererOptions(object):
 			self.render_video_fps = self.fps
 		self.quiet = args.quiet
 		self.antialias = args.antialias
+		self.dithering = args.dithering
 
 
 class Renderer(object):
@@ -1254,6 +1274,7 @@ def main():
 	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
 	parser_render.add_argument('--quiet', action='store_true', help="Queit")
 	parser_render.add_argument('--antialias', type=parse_resolution, default=(1, 1), help="Antialiasing")
+	parser_render.add_argument('--dithering', type=int, default=0, help="Enable dithering")
 
 	parser_extract_sources = subparsers.add_parser('extract_sources', help="Extract shader sources")
 	parser_extract_sources.add_argument('file', type=argparse.FileType('r'), help="Shader file")

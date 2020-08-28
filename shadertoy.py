@@ -122,13 +122,14 @@ void main(void)
 	outColor = color;
 }}
 """
-AUDIO_FRAGMENT_SHADER_TEMPLATE = """#version 330
+SOUND_FRAGMENT_SHADER_TEMPLATE = """#version 330
 {inputs}
+
 {redefinitions}
 {sampler}
 {definitions}
 
-void mainSound(float time);
+vec2 mainSound(float time);
 
 {common}
 {code}
@@ -137,7 +138,7 @@ out vec4 outColor;
 
 void main(void)
 {{
-	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*512.0)/iSampleRate;"
+	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*512.0)/iSampleRate;
 	vec2 y = mainSound(t);
 	vec2 v = floor((0.5+0.5*y)*65536.0);
 	vec2 vl = mod(v,256.0)/255.0;
@@ -410,6 +411,12 @@ class Shader(object):
 		gl.glCompileShader(shader)
 		if not gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS):
 			error = gl.glGetShaderInfoLog(shader).decode()
+			line_number = re.match(r'\d+:(\d+)', error)
+			if line_number:
+				line_number = int(line_number.group(1))
+				code = code.splitlines()
+				sys.stdout.write('> %s\n' % code[line_number])
+				sys.stdout.flush()
 			raise RuntimeError("Shader %s not compiled: %s" % (self.__name, error))
 		gl.glAttachShader(self.program, shader)
 
@@ -750,7 +757,7 @@ class RenderPass(BaseRenderPass):
 		else:
 			return IDENTITY_VERTEX_SHADER
 
-	def get_fragment_shader(self):
+	def get_fragment_shader_replacements(self):
 		# samplerCube
 		i_channels = ['sampler2D'] * NR_CHANNELS
 		for i_channel in self.inputs:
@@ -766,7 +773,7 @@ class RenderPass(BaseRenderPass):
 				fps=self.renderer.options.fps,
 				shutter_speed=self.renderer.options.shutter_speed,
 			)
-		return self._fragment_shader_template.format(
+		return dict(
 			inputs=COMMON_INPUTS,
 			definitions=COMMON_DEFINITIONS,
 			render_main=main,
@@ -775,6 +782,9 @@ class RenderPass(BaseRenderPass):
 			common=self.renderer.common,
 			code=self.code
 		)
+
+	def get_fragment_shader(self):
+		return self._fragment_shader_template.format(**self.get_fragment_shader_replacements())
 
 	def update_uniforms(self, inputs):
 		self.shader.use()
@@ -971,8 +981,42 @@ class BufferRenderPass(ImageRenderPass):
 
 
 class SoundRenderPass(RenderPass):
+	_fragment_shader_template = SOUND_FRAGMENT_SHADER_TEMPLATE
+	sample_size = 512
+	sample_rate = 44100
+
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
+		self.framebuffer = gl.glGenFramebuffers(1)
+		self.sample = gl.glGenTextures(1)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, self.sample_size, 1, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.sample, 0)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+
+	def get_fragment_shader_replacements(self):
+		replacements = super().get_fragment_shader_replacements()
+		replacements['inputs'] = replacements['inputs'] + "\nuniform float iBlockOffset;"
+		return replacements
+
+	def render(self):
+		self.shader.use()
+		self.bind_inputs()
+
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+		gl.glActiveTexture(gl.GL_TEXTURE0)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
+		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+
+	def get_texture(self):
+		return Texture(gl.GL_TEXTURE_2D, self.sample)
+
+	def get_framebuffer(self):
+		return self.framebuffer
 
 
 class RendererOptions(object):
@@ -1025,6 +1069,7 @@ class Renderer(object):
 		self.render_passes = []
 		self.render_passes_by_id = {}
 		self.output = None
+		self.sound = None
 		self.common = ''
 		self.ffmpeg = None
 		self.ffmpeg_feed = None
@@ -1048,6 +1093,8 @@ class Renderer(object):
 			render_pass = RenderPass.create(self, render_pass_definition)
 			if render_pass.type == 'image':
 				self.output = render_pass
+			elif render_pass.type == 'sound':
+				self.sound = render_pass
 			self.render_passes.append(render_pass)
 			self.render_passes_by_id[render_pass.output_id] = render_pass
 		if self.options.render_video:

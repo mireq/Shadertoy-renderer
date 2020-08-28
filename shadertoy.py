@@ -122,6 +122,29 @@ void main(void)
 	outColor = color;
 }}
 """
+AUDIO_FRAGMENT_SHADER_TEMPLATE = """#version 330
+{inputs}
+{redefinitions}
+{sampler}
+{definitions}
+
+void mainSound(float time);
+
+{common}
+{code}
+
+out vec4 outColor;
+
+void main(void)
+{{
+	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*512.0)/iSampleRate;"
+	vec2 y = mainSound(t);
+	vec2 v = floor((0.5+0.5*y)*65536.0);
+	vec2 vl = mod(v,256.0)/255.0;
+	vec2 vh = floor(v/256.0)/255.0;
+	outColor = vec4(vl.x, vh.x, vl.y, vh.y);
+}}
+"""
 
 IDENTITY_VERTEX_SHADER = """#version 330
 
@@ -702,6 +725,8 @@ class RenderPass(BaseRenderPass):
 			return ImageRenderPass(renderer, pass_definition)
 		elif pass_definition['type'] == 'buffer':
 			return BufferRenderPass(renderer, pass_definition)
+		elif pass_definition['type'] == 'sound':
+			return SoundRenderPass(renderer, pass_definition)
 		elif pass_definition['type'] == 'video':
 			return VideoRenderPass(renderer)
 		else:
@@ -941,6 +966,11 @@ class VideoRenderPass(BaseRenderPass):
 class BufferRenderPass(ImageRenderPass):
 	_framebuffer_internal_format = gl.GL_RGBA32F
 	_fragment_shader_template = BUFFER_FRAGMENT_SHADER_TEMPLATE
+
+
+class SoundRenderPass(RenderPass):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
 
 
 class RendererOptions(object):

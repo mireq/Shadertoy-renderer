@@ -68,7 +68,7 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 	vec3 rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
 	rnd = fract(rnd * .1031);
 	rnd += dot(rnd, rnd.yzx + 33.33);
-	float timeOffset = fract((rnd.x + rnd.y) * rnd.z) / 60.0 / ({x} * {y});
+	float timeOffset = fract((rnd.x + rnd.y) * rnd.z) / {fps} / ({x} * {y}) * {shutter_speed};
 
 	for (int i = 0; i < {x}; ++i) {{
 		for (int j = 0; j < {y}; ++j) {{
@@ -763,6 +763,8 @@ class RenderPass(BaseRenderPass):
 			main = RENDER_MAIN_ANTIALIAS_TEMPLATE.format(
 				x=self.renderer.options.antialias[0],
 				y=self.renderer.options.antialias[1],
+				fps=self.renderer.options.fps,
+				shutter_speed=self.renderer.options.shutter_speed,
 			)
 		return self._fragment_shader_template.format(
 			inputs=COMMON_INPUTS,
@@ -994,6 +996,7 @@ class RendererOptions(object):
 			self.render_video_fps = self.fps
 		self.quiet = args.quiet
 		self.antialias = args.antialias
+		self.shutter_speed = args.shutter_speed
 		self.dithering = args.dithering
 
 
@@ -1304,6 +1307,7 @@ def main():
 	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
 	parser_render.add_argument('--quiet', action='store_true', help="Queit")
 	parser_render.add_argument('--antialias', type=parse_resolution, default=(1, 1), help="Antialiasing")
+	parser_render.add_argument('--shutter-speed', type=float, default=1.0, help="Shutter speed (only if antialias is enabled)")
 	parser_render.add_argument('--dithering', type=int, default=0, help="Enable dithering")
 
 	parser_extract_sources = subparsers.add_parser('extract_sources', help="Extract shader sources")

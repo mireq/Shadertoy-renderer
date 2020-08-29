@@ -902,7 +902,11 @@ class VideoRenderPass(BaseRenderPass):
 		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
 		self.dithering = renderer.options.dithering
 		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-		self.ffmpeg_feed = self.ffmpeg.stdin
+		self.ffmpeg_inputs = {
+			'audio': [],
+			'video': [],
+		}
+		self.ffmpeg_inputs['video'].append(self.ffmpeg.stdin)
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
 		self.current_frame = array.array('B', [0] * self.renderer.options.w * self.renderer.options.h * 3)
 		self.motion_blur = self.video_framerate_controller.out_fps <= self.video_framerate_controller.fps
@@ -957,21 +961,23 @@ class VideoRenderPass(BaseRenderPass):
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0])
 				for __ in range(frame_action.emit_frames):
-					self.ffmpeg_feed.write(self.current_frame.tobytes())
+					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 			else:
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer)
 				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0])
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 				for __ in range(frame_action.emit_frames):
-					self.ffmpeg_feed.write(self.current_frame.tobytes())
+					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
 			self.output_frame_number += 1
 		else:
 			self.current_frame_number += 1
 
 	def destroy(self):
 		if self.ffmpeg is not None:
-			self.ffmpeg_feed.close()
+			for input_list in self.ffmpeg_inputs.values():
+				for input_stream in input_list:
+					input_stream.close()
 			self.ffmpeg.wait()
 
 

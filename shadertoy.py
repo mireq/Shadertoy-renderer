@@ -984,6 +984,7 @@ class SoundRenderPass(RenderPass):
 	_fragment_shader_template = SOUND_FRAGMENT_SHADER_TEMPLATE
 	sample_size = 512
 	sample_rate = 44100
+	current_sample = 0
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -991,7 +992,7 @@ class SoundRenderPass(RenderPass):
 		self.sample = gl.glGenTextures(1)
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, self.sample_size, 1, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, self.sample_size, self.sample_size, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.sample, 0)
@@ -1003,14 +1004,19 @@ class SoundRenderPass(RenderPass):
 		return replacements
 
 	def render(self):
-		self.shader.use()
-		self.bind_inputs()
+		required_sample = ((self.renderer.frame + 1) * self.sample_rate) // self.renderer.options.fps
+		if self.current_sample < required_sample:
+			self.shader.use()
+			self.bind_inputs()
 
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
-		gl.glActiveTexture(gl.GL_TEXTURE0)
-		gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
-		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+			while self.current_sample < required_sample:
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+				gl.glActiveTexture(gl.GL_TEXTURE0)
+				gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
+				gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+				self.current_sample += self.sample_size * self.sample_size
+				print("audio")
 
 	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.sample)
@@ -1071,8 +1077,6 @@ class Renderer(object):
 		self.output = None
 		self.sound = None
 		self.common = ''
-		self.ffmpeg = None
-		self.ffmpeg_feed = None
 		self.start_time = time.monotonic()
 		self.current_time = self.start_time
 		self.last_time = self.start_time

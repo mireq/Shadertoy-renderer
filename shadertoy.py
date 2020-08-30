@@ -217,7 +217,7 @@ void main()
 
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 15 -c:v libx264 -c:a ac3 -pix_fmt yuv420p -preset slow -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 15 -c:v libx264 -c:a flac -pix_fmt yuv420p -preset slow -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
@@ -337,7 +337,6 @@ class PipeIO(object):
 			packet = self.w_queue.get()
 			if self.w is None:
 				continue
-			print("write %d" % len(packet))
 			while packet:
 				try:
 					count = os.write(self.w, packet)
@@ -364,6 +363,9 @@ class PipeIO(object):
 		if self.w is not None:
 			os.close(self.w)
 			self.w = None
+
+	def w_full(self):
+		return self.w_queue.full()
 
 
 class MediaSourceType(enum.Enum):
@@ -943,7 +945,7 @@ class VideoRenderPass(BaseRenderPass):
 			os.set_inheritable(r, True)
 			os.set_inheritable(w, True)
 			audio_inputs.append(PipeIO(r, w, 2))
-			more_inputs += ['-f', 's16le', '-sample_rate', str(renderer.sound.sample_rate), '-channels', '2', '-codec:a', 'pcm_s16le', '-channel_layout', 'stereo', '-i', 'pipe:' + str(r)]
+			more_inputs += ['-f', 'u16le', '-sample_rate', str(renderer.sound.sample_rate), '-channels', '2', '-codec:a', 'pcm_u16le', '-channel_layout', 'stereo', '-i', 'pipe:' + str(r)]
 		replacements = {
 			'ffmpeg': FFMPEG_BINARY,
 			'resolution': f'{self.renderer.options.w}x{self.renderer.options.h}',
@@ -956,7 +958,7 @@ class VideoRenderPass(BaseRenderPass):
 		self.dithering = renderer.options.dithering
 		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE, pass_fds=list(i.r for i in audio_inputs))
 		self.ffmpeg_inputs = {
-			'audio': audio_inputs,
+			'sound': audio_inputs,
 			'video': [self.ffmpeg.stdin],
 		}
 
@@ -990,7 +992,8 @@ class VideoRenderPass(BaseRenderPass):
 		frame_action = self.video_framerate_controller.on_frame()
 
 		if self.renderer.sound:
-			self.ffmpeg_inputs['audio'][0].write(b'\x99' * 2940)
+			while not self.ffmpeg_inputs['sound'][0].w_full() and not self.renderer.sound.buffers.empty():
+				self.ffmpeg_inputs['sound'][0].write(self.renderer.sound.buffers.get().tobytes())
 
 		if self.motion_blur or self.dithering:
 			self.shader.use()
@@ -1047,6 +1050,7 @@ class SoundRenderPass(RenderPass):
 	sample_size = 512
 	sample_rate = 44100
 	current_sample = 0
+	buffers = queue.Queue(maxsize=2)
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -1060,25 +1064,33 @@ class SoundRenderPass(RenderPass):
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.sample, 0)
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
+		gl.glUniform1f(self.shader.get_uniform("iSampleRate"), self.sample_rate)
+
+
 	def get_fragment_shader_replacements(self):
 		replacements = super().get_fragment_shader_replacements()
 		replacements['inputs'] = replacements['inputs'] + "\nuniform float iBlockOffset;"
 		return replacements
 
 	def render(self):
-		required_sample = ((self.renderer.frame + 1) * self.sample_rate) // self.renderer.options.fps
-		if self.current_sample < required_sample:
+		if not self.buffers.full():
 			self.shader.use()
 			self.bind_inputs()
 
-			while self.current_sample < required_sample:
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
-				gl.glActiveTexture(gl.GL_TEXTURE0)
-				gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
-				gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
-				self.current_sample += self.sample_size * self.sample_size
-				print("audio")
+		while not self.buffers.full():
+			gl.glUniform1f(self.shader.get_uniform("iBlockOffset"), self.current_sample / self.sample_rate)
+			gl.glViewport(0, 0, self.sample_size, self.sample_size)
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+			gl.glActiveTexture(gl.GL_TEXTURE0)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
+			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
+			buf = array.array('B', [0] * self.sample_size * self.sample_size * 4)
+			gl.glReadPixels(0, 0, self.sample_size, self.sample_size, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, buf.buffer_info()[0])
+			self.buffers.put(buf)
+			self.current_sample += 512*512
 
 	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.sample)

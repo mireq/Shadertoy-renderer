@@ -7,14 +7,17 @@ import contextlib
 import ctypes
 import enum
 import hashlib
+import io
 import json
 import logging
 import os
+import queue
 import re
 import shlex
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -214,7 +217,7 @@ void main()
 
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} -vf vflip -an -y -crf 15 -c:v libx264 -pix_fmt yuv420p -preset slow -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 15 -c:v libx264 -c:a ac3 -pix_fmt yuv420p -preset slow -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
@@ -320,6 +323,47 @@ def open_asset(path, base=None):
 			fp.close
 	else:
 		raise NotImplementedError()
+
+
+class PipeIO(object):
+	def __init__(self, r, w, queue_size=1):
+		self.r = r
+		self.w = w
+		self.w_queue = queue.Queue(maxsize=queue_size)
+		threading.Thread(target=self.write_worker, daemon=True).start()
+
+	def write_worker(self):
+		while True:
+			packet = self.w_queue.get()
+			if self.w is None:
+				continue
+			print("write %d" % len(packet))
+			while packet:
+				try:
+					count = os.write(self.w, packet)
+					if count < len(packet):
+						packet = packet[count:]
+					else:
+						break
+				except (KeyboardInterrupt, SystemExit):
+					if self.w is not None:
+						os.close(self.w)
+						self.w = None
+					raise
+
+	def read(self, size):
+		return os.read(self.r, size)
+
+	def write(self, data):
+		self.w_queue.put(data)
+
+	def close(self):
+		if self.r is not None:
+			os.close(self.r)
+			self.r = None
+		if self.w is not None:
+			os.close(self.w)
+			self.w = None
 
 
 class MediaSourceType(enum.Enum):
@@ -892,21 +936,30 @@ class VideoRenderPass(BaseRenderPass):
 	def __init__(self, renderer):
 		super().__init__(renderer)
 		self.ffmpeg_feed = False
+		more_inputs = []
+		audio_inputs = []
+		if renderer.sound is not None:
+			r, w = os.pipe()
+			os.set_inheritable(r, True)
+			os.set_inheritable(w, True)
+			audio_inputs.append(PipeIO(r, w, 2))
+			more_inputs += ['-f', 's16le', '-sample_rate', str(renderer.sound.sample_rate), '-channels', '2', '-codec:a', 'pcm_s16le', '-channel_layout', 'stereo', '-i', 'pipe:' + str(r)]
 		replacements = {
 			'ffmpeg': FFMPEG_BINARY,
 			'resolution': f'{self.renderer.options.w}x{self.renderer.options.h}',
 			'input': 'pipe:0',
 			'framerate': str(self.renderer.options.render_video_fps),
 			'output': self.renderer.options.render_video,
+			'more_inputs': more_inputs,
 		}
 		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
 		self.dithering = renderer.options.dithering
-		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE, pass_fds=list(i.r for i in audio_inputs))
 		self.ffmpeg_inputs = {
-			'audio': [],
-			'video': [],
+			'audio': audio_inputs,
+			'video': [self.ffmpeg.stdin],
 		}
-		self.ffmpeg_inputs['video'].append(self.ffmpeg.stdin)
+
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
 		self.current_frame = array.array('B', [0] * self.renderer.options.w * self.renderer.options.h * 3)
 		self.motion_blur = self.video_framerate_controller.out_fps <= self.video_framerate_controller.fps
@@ -935,6 +988,9 @@ class VideoRenderPass(BaseRenderPass):
 
 	def render(self):
 		frame_action = self.video_framerate_controller.on_frame()
+
+		if self.renderer.sound:
+			self.ffmpeg_inputs['audio'][0].write(b'\x99' * 2940)
 
 		if self.motion_blur or self.dithering:
 			self.shader.use()

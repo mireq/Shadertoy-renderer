@@ -1268,7 +1268,7 @@ class Renderer(object):
 				render_pass.render()
 		gl.glFinish()
 		frame_end = time.monotonic()
-		self.frame_durations = self.frame_durations[:-FRAME_DURATION_AVERAGE+1] + [frame_end - frame_start]
+		self.frame_durations = self.frame_durations[-FRAME_DURATION_AVERAGE+1:] + [frame_end - frame_start]
 
 		for render_pass in self.render_passes:
 			if isinstance(render_pass, VideoRenderPass):

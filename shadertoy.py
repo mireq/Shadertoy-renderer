@@ -1384,6 +1384,8 @@ def extract_sources(args):
 			if renderpass['code'].startswith('file://'):
 				continue
 			basename = slugify(renderpass['name'], existing_names)
+			if not basename:
+				basename = renderpass['type']
 			existing_names.add(basename)
 			filename = to_local_filename(basename + '.frag', args.file.name)
 			with open(filename, 'w') as fp:

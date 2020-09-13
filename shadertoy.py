@@ -217,7 +217,7 @@ void main()
 
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 15 -c:v libx264 -c:a flac -pix_fmt yuv420p -preset slow -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 18 -c:v libx264 -c:a flac -pix_fmt yuv420p -preset slow -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
@@ -457,6 +457,8 @@ class Shader(object):
 		gl.glCompileShader(shader)
 		if not gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS):
 			error = gl.glGetShaderInfoLog(shader).decode()
+			if isinstance(error, bytes):
+				error = error.decode()
 			line_number = re.match(r'\d+:(\d+)', error)
 			if line_number:
 				line_number = int(line_number.group(1))
@@ -469,7 +471,9 @@ class Shader(object):
 	def __link_shader(self):
 		gl.glLinkProgram(self.program)
 		if not gl.glGetProgramiv(self.program, gl.GL_LINK_STATUS):
-			error = gl.glGetProgramInfoLog(self.program).decode()
+			error = gl.glGetProgramInfoLog(self.program)
+			if isinstance(error, bytes):
+				error = error.decode()
 			raise RuntimeError("Shader %s not linked: %s" % (self.__name, error))
 
 
@@ -1119,6 +1123,7 @@ class RendererOptions(object):
 		if args.render_video and self.render_video_fps is None:
 			self.render_video_fps = self.fps
 		self.quiet = args.quiet
+		self.no_window = args.no_window
 		self.antialias = args.antialias
 		self.shutter_speed = args.shutter_speed
 		self.dithering = args.dithering
@@ -1349,7 +1354,11 @@ def render(args):
 	glut.glutInitContextProfile(glut.GLUT_CORE_PROFILE)
 	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
 	glut.glutInitWindowSize(*options.resolution)
-	glut.glutCreateWindow("Shadertoy")
+	win = glut.glutCreateWindow("Shadertoy")
+	if options.no_window:
+		glut.glutDestroyWindow(win)
+	else:
+		glut.glutReshapeWindow(*options.resolution)
 
 	renderer = Renderer(json.load(options.file), options)
 	glut.glutDisplayFunc(renderer.render_display)
@@ -1359,14 +1368,14 @@ def render(args):
 	glut.glutKeyboardFunc(renderer.keyboard_down)
 	glut.glutKeyboardUpFunc(renderer.keyboard_up)
 	#glut.glutIdleFunc(renderer.idle)
-	glut.glutReshapeWindow(*options.resolution)
 
 	while True:
 		try:
 			glut.glutMainLoopEvent()
 			renderer.render_offscreen()
 			glut.glutMainLoopEvent()
-			glut.glutPostRedisplay()
+			if not options.no_window:
+				glut.glutPostRedisplay()
 		except KeyboardInterrupt:
 			sys.stdout.write("Stopping\n")
 			sys.stdout.flush()
@@ -1433,6 +1442,7 @@ def main():
 	parser_render.add_argument('--render-video-fps', type=int, help="Video frame rate")
 	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
 	parser_render.add_argument('--quiet', action='store_true', help="Queit")
+	parser_render.add_argument('--no-window', action='store_true', help="No window")
 	parser_render.add_argument('--antialias', type=parse_resolution, default=(1, 1), help="Antialiasing")
 	parser_render.add_argument('--shutter-speed', type=float, default=1.0, help="Shutter speed (only if antialias is enabled)")
 	parser_render.add_argument('--dithering', type=int, default=0, help="Enable dithering")

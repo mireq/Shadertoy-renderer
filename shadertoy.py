@@ -23,8 +23,14 @@ import unicodedata
 import urllib.parse
 import urllib.request
 
+if '--no-window' in sys.argv:
+	os.environ["PYOPENGL_PLATFORM"] = "egl"
 import OpenGL.GL as gl
-import OpenGL.GLUT as glut
+try:
+	import OpenGL.GLUT as glut
+except NotImplementedError:
+	pass
+
 
 
 # Using Dave Hoskins' hash functions (https://www.shadertoy.com/view/4djSRW)
@@ -793,9 +799,9 @@ class RenderPass(BaseRenderPass):
 		shader = Shader(self.get_vertex_shader(), self.get_fragment_shader(), name=self.name)
 		shader.use()
 
-		gl.glEnableVertexAttribArray(shader.get_attribute("position"))
-		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
-		gl.glVertexAttribPointer(shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.renderer.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
+		#gl.glEnableVertexAttribArray(shader.get_attribute("position"))
+		#gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
+		#gl.glVertexAttribPointer(shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.renderer.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
 
 		gl.glUniform3f(shader.get_uniform("iResolution"), float(self.renderer.options.w), float(self.renderer.options.h), float(0))
 
@@ -916,7 +922,9 @@ class ImageRenderPass(RenderPass):
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer)
 			gl.glActiveTexture(gl.GL_TEXTURE0)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
+			self.renderer.enable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+			self.renderer.disable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
 			if tiling:
@@ -1014,7 +1022,9 @@ class VideoRenderPass(BaseRenderPass):
 			gl.glUniform1i(self.shader.get_uniform("average_frames"), (self.current_frame_number if frame_action.emit_frames else 0) + 1)
 
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
+			self.renderer.enable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+			self.renderer.disable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 			gl.glFinish()
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
@@ -1087,7 +1097,9 @@ class SoundRenderPass(RenderPass):
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 			gl.glActiveTexture(gl.GL_TEXTURE0)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.sample)
+			self.renderer.enable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+			self.renderer.disable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
@@ -1134,16 +1146,18 @@ class Renderer(object):
 		self.options = options
 		self.vertex_surface_data = array.array('f', [-1,+1,+1,+1,-1,-1,+1,-1])
 		self.vertex_surface_buffer = gl.glGenBuffers(1)
+		self.vertex_surface_array = gl.glGenVertexArrays(1)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface_data.itemsize * len(self.vertex_surface_data), self.vertex_surface_data.tobytes(), gl.GL_DYNAMIC_DRAW)
 
 		self.shader = Shader(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER)
 
 		self.shader.use()
-		gl.glBindVertexArray(gl.glGenVertexArrays(1))
-		gl.glEnableVertexAttribArray(self.shader.get_attribute("position"))
-		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
-		gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
+		#gl.glBindVertexArray(gl.glGenVertexArrays(1))
+		#gl.glEnableVertexAttribArray(self.shader.get_attribute("position"))
+		#gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
+		#gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
+		#gl.glDisableVertexAttribArray(self.shader.get_attribute("position"))
 
 		self.image_pack_buffer = gl.glGenBuffers(1)
 		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)
@@ -1211,7 +1225,9 @@ class Renderer(object):
 		gl.glBindTexture(*self.output.get_texture())
 		gl.glUniform1i(self.shader.get_uniform("texture"), 0)
 
+		self.enable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 		gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+		self.disable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
 		gl.glFinish()
 		glut.glutSwapBuffers()
 
@@ -1300,6 +1316,15 @@ class Renderer(object):
 	def get_render_pass_by_id(self, output_id):
 		return self.render_passes_by_id[output_id]
 
+	def enable_surface_vertex_attrib_array(self, attribute):
+		gl.glBindVertexArray(gl.glGenVertexArrays(1))
+		gl.glEnableVertexAttribArray(attribute)
+		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
+		gl.glVertexAttribPointer(attribute, 2, gl.GL_FLOAT, False, self.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
+
+	def disable_surface_vertex_attrib_array(self, attribute):
+		gl.glDisableVertexAttribArray(attribute)
+
 	def __calc_tiles(self):
 		tiled_width = (self.options.w + self.options.tile_w - 1) // self.options.tile_w
 		tiled_height = (self.options.h + self.options.tile_h - 1) // self.options.tile_h
@@ -1347,40 +1372,92 @@ def parse_shadertoy_url(val):
 def render(args):
 	options = RendererOptions(args)
 
-	os.environ['vblank_mode'] = '0'
-
-	glut.glutInit()
-	glut.glutInitContextVersion(3, 3)
-	glut.glutInitContextProfile(glut.GLUT_CORE_PROFILE)
-	glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
-	glut.glutInitWindowSize(*options.resolution)
-	win = glut.glutCreateWindow("Shadertoy")
 	if options.no_window:
-		glut.glutDestroyWindow(win)
-	else:
-		glut.glutReshapeWindow(*options.resolution)
-
-	renderer = Renderer(json.load(options.file), options)
-	glut.glutDisplayFunc(renderer.render_display)
-	#glut.glutReshapeFunc(renderer.reshape)
-	glut.glutMouseFunc(renderer.mouse)
-	glut.glutMotionFunc(renderer.mouse_motion)
-	glut.glutKeyboardFunc(renderer.keyboard_down)
-	glut.glutKeyboardUpFunc(renderer.keyboard_up)
-	#glut.glutIdleFunc(renderer.idle)
-
-	while True:
-		try:
-			glut.glutMainLoopEvent()
-			renderer.render_offscreen()
-			glut.glutMainLoopEvent()
-			if not options.no_window:
-				glut.glutPostRedisplay()
-		except KeyboardInterrupt:
-			sys.stdout.write("Stopping\n")
-			sys.stdout.flush()
-			renderer.quit()
+		import OpenGL.EGL as egl
+		display = egl.eglGetDisplay(egl.EGL_DEFAULT_DISPLAY)
+		major, minor = egl.EGLint(), egl.EGLint()
+		egl.eglInitialize(display, ctypes.pointer(major), ctypes.pointer(minor))
+		sys.stdout.write(f"EGL: {major.value}.{minor.value}\n")
+		egl_config = egl.EGLConfig()
+		num_configs = egl.EGLint()
+		def egl_convert_to_dict_array(attrs):
+			attrs = sum(([k, v] for k, v in attrs.items()), []) + [egl.EGL_NONE]
+			return (egl.EGLint * len(attrs))(*attrs)
+		egl_config_attribs = {
+			egl.EGL_RED_SIZE: 8,
+			egl.EGL_GREEN_SIZE: 8,
+			egl.EGL_BLUE_SIZE: 8,
+			egl.EGL_ALPHA_SIZE: 8,
+			egl.EGL_DEPTH_SIZE: egl.EGL_DONT_CARE,
+			egl.EGL_STENCIL_SIZE: egl.EGL_DONT_CARE,
+			egl.EGL_RENDERABLE_TYPE: egl.EGL_OPENGL_BIT,
+			egl.EGL_SURFACE_TYPE: egl.EGL_DONT_CARE,
+		}
+		egl_config_attribs = egl_convert_to_dict_array(egl_config_attribs)
+		if not egl.eglChooseConfig(display, egl_config_attribs, ctypes.pointer(egl_config), 1, ctypes.pointer(num_configs)) or num_configs.value == 0:
+			sys.stderr.write("EGL config not nfound\n")
 			sys.exit()
+		if not egl.eglBindAPI(egl.EGL_OPENGL_API):
+			sys.stderr.write("OpenGL API not bound\n")
+			sys.exit()
+		egl_config_attribs = {
+			egl.EGL_CONTEXT_MAJOR_VERSION: 3,
+			egl.EGL_CONTEXT_MINOR_VERSION: 3,
+			egl.EGL_CONTEXT_OPENGL_PROFILE_MASK: egl. EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+		}
+		egl_config_attribs = egl_convert_to_dict_array(egl_config_attribs)
+		context = egl.eglCreateContext(display, egl_config, egl.EGL_NO_CONTEXT, egl_config_attribs)
+		if not context:
+			sys.stderr.write("EGL context not created\n")
+			sys.exit()
+		if not egl.eglMakeCurrent(display, egl.EGL_NO_SURFACE, egl.EGL_NO_SURFACE, context):
+			sys.stderr.write("eglMakeCurrent call failed\n")
+			sys.exit()
+
+		renderer = Renderer(json.load(options.file), options)
+		while True:
+			try:
+				renderer.render_offscreen()
+			except KeyboardInterrupt:
+				sys.stdout.write("Stopping\n")
+				sys.stdout.flush()
+				renderer.quit()
+				sys.exit()
+	else:
+		os.environ['vblank_mode'] = '0'
+
+		glut.glutInit()
+		glut.glutInitContextVersion(3, 3)
+		glut.glutInitContextProfile(glut.GLUT_CORE_PROFILE)
+		glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
+		glut.glutInitWindowSize(*options.resolution)
+		win = glut.glutCreateWindow("Shadertoy")
+		if options.no_window:
+			glut.glutDestroyWindow(win)
+		else:
+			glut.glutReshapeWindow(*options.resolution)
+
+		renderer = Renderer(json.load(options.file), options)
+		glut.glutDisplayFunc(renderer.render_display)
+		#glut.glutReshapeFunc(renderer.reshape)
+		glut.glutMouseFunc(renderer.mouse)
+		glut.glutMotionFunc(renderer.mouse_motion)
+		glut.glutKeyboardFunc(renderer.keyboard_down)
+		glut.glutKeyboardUpFunc(renderer.keyboard_up)
+		#glut.glutIdleFunc(renderer.idle)
+
+		while True:
+			try:
+				glut.glutMainLoopEvent()
+				renderer.render_offscreen()
+				glut.glutMainLoopEvent()
+				if not options.no_window:
+					glut.glutPostRedisplay()
+			except KeyboardInterrupt:
+				sys.stdout.write("Stopping\n")
+				sys.stdout.flush()
+				renderer.quit()
+				sys.exit()
 
 
 def extract_sources(args):

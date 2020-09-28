@@ -1317,7 +1317,7 @@ class Renderer(object):
 		return self.render_passes_by_id[output_id]
 
 	def enable_surface_vertex_attrib_array(self, attribute):
-		gl.glBindVertexArray(gl.glGenVertexArrays(1))
+		gl.glBindVertexArray(self.vertex_surface_array)
 		gl.glEnableVertexAttribArray(attribute)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glVertexAttribPointer(attribute, 2, gl.GL_FLOAT, False, self.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))

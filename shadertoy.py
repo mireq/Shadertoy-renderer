@@ -26,6 +26,7 @@ import urllib.request
 if '--no-window' in sys.argv:
 	os.environ["PYOPENGL_PLATFORM"] = "egl"
 import OpenGL.GL as gl
+from OpenGL.GL.ARB import robustness
 try:
 	import OpenGL.GLUT as glut
 except NotImplementedError:
@@ -223,7 +224,7 @@ void main()
 
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 18 -c:v libx264 -c:a flac -pix_fmt yuv420p -preset slow -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 17 -c:v libx264 -c:a flac -pix_fmt yuv420p -preset slow -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
@@ -256,6 +257,9 @@ class Blitter(object):
 		gl.glBlitFramebuffer(*args)
 		gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
 		gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
+
+	def destroy(self):
+		gl.glDeleteFramebuffers(2, [self.src_framebuffer, self.target_framebuffer])
 
 
 def slugify(name, existing_names=None):
@@ -458,6 +462,9 @@ class Shader(object):
 	def get_uniform(self, name):
 		return gl.glGetUniformLocation(self.program, name)
 
+	def destroy(self):
+		gl.glDeleteProgram(self.program)
+
 	def __compile_shader(self, shader, code):
 		gl.glShaderSource(shader, code)
 		gl.glCompileShader(shader)
@@ -558,6 +565,12 @@ class Input(object):
 	def load_texture(self):
 		pass
 
+	def init_gl(self, restore=False):
+		pass
+
+	def clean_gl(self):
+		pass
+
 
 class DummyInput(Input):
 	def __init__(self, renderer, channel):
@@ -575,10 +588,10 @@ class TextureInput(Input):
 		self.texture = None
 		self.width = 0
 		self.height = 0
+		self.__loaded = False
 
 	def load_texture(self):
-		if self.texture is None:
-			self.texture = gl.glGenTextures(1)
+		if not self.__loaded:
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
 			self._setup_sampler(gl.GL_TEXTURE_2D)
 
@@ -593,6 +606,14 @@ class TextureInput(Input):
 						gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+			self.__loaded = True
+
+	def init_gl(self, restore=False):
+		self.__loaded = False
+		self.texture = gl.glGenTextures(1)
+
+	def clean_gl(self):
+		gl.glDeleteTextures(1, [self.texture])
 
 	def get_resolution(self):
 		return [self.width, self.height, 1]
@@ -655,22 +676,20 @@ class BufferInput(TextureInput):
 		self.id = input_definition['id']
 		self.texture = 0
 		self.blitter = None
+		self.__loaded = False
 
 	def load_texture(self):
-		if self.texture != 0:
-			return
-		render_pass = self.renderer.get_render_pass_by_id(self.id)
+		if not self.__loaded:
+			render_pass = self.renderer.get_render_pass_by_id(self.id)
+			self.blitter = Blitter(render_pass.get_framebuffer())
 
-		self.texture = gl.glGenTextures(1)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.width, self.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+			self._setup_sampler(gl.GL_TEXTURE_2D)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
-		self.blitter = Blitter(render_pass.get_framebuffer())
-
-		gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.width, self.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
-		self._setup_sampler(gl.GL_TEXTURE_2D)
-		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-
-		self.blitter.set_target_texture(self.texture)
+			self.blitter.set_target_texture(self.texture)
+			self.__loaded = True
 
 	def get_resolution(self):
 		return [self.width, self.height, 1]
@@ -683,6 +702,15 @@ class BufferInput(TextureInput):
 			gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 		return Texture(gl.GL_TEXTURE_2D, self.texture)
+
+	def init_gl(self, restore=False):
+		self.__loaded = False
+		self.texture = gl.glGenTextures(1)
+
+	def clean_gl(self):
+		gl.glDeleteTextures(1, self.texture)
+		if self.__loaded:
+			self.blitter.destroy()
 
 
 class KeyboardInput(Input):
@@ -745,6 +773,12 @@ class BaseRenderPass(object):
 	def destroy(self):
 		pass
 
+	def clean_gl(self):
+		pass
+
+	def init_gl(self, restore=False):
+		pass
+
 
 class RenderPass(BaseRenderPass):
 	_fragment_shader_template = None
@@ -771,7 +805,6 @@ class RenderPass(BaseRenderPass):
 				self.inputs.append(Input.create(self.renderer, input_definitions[channel]))
 			else:
 				self.inputs.append(DummyInput(self.renderer, channel))
-		self.shader = self.make_shader()
 
 	def get_texture(self):
 		raise NotImplementedError()
@@ -781,6 +814,16 @@ class RenderPass(BaseRenderPass):
 
 	def render(self):
 		raise NotImplementedError()
+
+	def init_gl(self, restore=False):
+		self.shader = self.make_shader()
+		for channel in self.inputs:
+			channel.init_gl(restore=restore)
+
+	def clean_gl(self):
+		for channel in self.inputs:
+			channel.clean_gl()
+		self.shader.destroy()
 
 	@staticmethod
 	def create(renderer, pass_definition):
@@ -798,10 +841,6 @@ class RenderPass(BaseRenderPass):
 	def make_shader(self):
 		shader = Shader(self.get_vertex_shader(), self.get_fragment_shader(), name=self.name)
 		shader.use()
-
-		#gl.glEnableVertexAttribArray(shader.get_attribute("position"))
-		#gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
-		#gl.glVertexAttribPointer(shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.renderer.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
 
 		gl.glUniform3f(shader.get_uniform("iResolution"), float(self.renderer.options.w), float(self.renderer.options.h), float(0))
 
@@ -886,6 +925,10 @@ class RenderPass(BaseRenderPass):
 
 		return image, framebuffer, tile_image, tile_framebuffer
 
+	def clear_tile_framebuffer(self, image, framebuffer, tile_image, tile_framebuffer):
+		gl.glDeleteTextures(2, [image, tile_image])
+		gl.glDeleteFramebuffers(2, [framebuffer, tile_framebuffer])
+
 	def bind_inputs(self):
 		for input_channel in self.inputs:
 			input_channel.load_texture()
@@ -905,11 +948,18 @@ class ImageRenderPass(RenderPass):
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
+
+	def init_gl(self, restore=False):
+		super().init_gl(restore=restore)
 		image, framebuffer, tile_image, tile_framebuffer = self.make_tile_framebuffer()
 		self.framebuffer = framebuffer
 		self.image = image
 		self.tile_image = tile_image
 		self.tile_framebuffer = tile_framebuffer
+
+	def clean_gl(self, *args, **kwargs):
+		self.clear_tile_framebuffer(self.image, self.framebuffer, self.tile_image, self.tile_framebuffer)
+		super().clean_gl(*args, **kwargs)
 
 	def render(self):
 		self.shader.use()
@@ -983,6 +1033,12 @@ class VideoRenderPass(BaseRenderPass):
 		self.frame = None
 		self.current_frame_number = 0
 		self.output_frame_number = 1
+		self.framebuffer = None
+		self.image = None
+		self.init_gl()
+
+	def init_gl(self, restore=False):
+		super().init_gl(restore=restore)
 		if self.motion_blur or self.motion_blur:
 			self.framebuffer = gl.glGenFramebuffers(1)
 			self.image = gl.glGenTextures(1)
@@ -999,6 +1055,12 @@ class VideoRenderPass(BaseRenderPass):
 			self.shader = Shader(TEXTURE_VERTEX_SHADER, VIDEO_FRAGMENT_SHADER)
 			self.shader.use()
 			gl.glUniform1i(self.shader.get_uniform("dithering"), self.dithering)
+
+	def clean_gl(self):
+		if self.motion_blur or self.motion_blur:
+			self.glDeleteTextures(1, [self.image])
+			self.glDeleteFramebuffers(1, [self.framebuffer])
+			self.shader.destroy()
 
 	def render(self):
 		frame_action = self.video_framerate_controller.on_frame()
@@ -1068,6 +1130,9 @@ class SoundRenderPass(RenderPass):
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
+		self.init_gl()
+
+	def init_gl(self, restore=False):
 		self.framebuffer = gl.glGenFramebuffers(1)
 		self.sample = gl.glGenTextures(1)
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
@@ -1080,6 +1145,9 @@ class SoundRenderPass(RenderPass):
 
 		gl.glUniform1f(self.shader.get_uniform("iSampleRate"), self.sample_rate)
 
+	def clean_gl(self):
+		self.glDeleteTextures(1, [self.sample])
+		self.glDeleteFramebuffers(1, [self.framebuffer])
 
 	def get_fragment_shader_replacements(self):
 		replacements = super().get_fragment_shader_replacements()
@@ -1145,24 +1213,6 @@ class Renderer(object):
 	def __init__(self, shader_definition, options):
 		self.options = options
 		self.vertex_surface_data = array.array('f', [-1,+1,+1,+1,-1,-1,+1,-1])
-		self.vertex_surface_buffer = gl.glGenBuffers(1)
-		self.vertex_surface_array = gl.glGenVertexArrays(1)
-		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
-		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface_data.itemsize * len(self.vertex_surface_data), self.vertex_surface_data.tobytes(), gl.GL_DYNAMIC_DRAW)
-
-		self.shader = Shader(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER)
-
-		self.shader.use()
-		#gl.glBindVertexArray(gl.glGenVertexArrays(1))
-		#gl.glEnableVertexAttribArray(self.shader.get_attribute("position"))
-		#gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
-		#gl.glVertexAttribPointer(self.shader.get_attribute("position"), 2, gl.GL_FLOAT, False, self.vertex_surface_data.itemsize * 2, ctypes.c_void_p(0))
-		#gl.glDisableVertexAttribArray(self.shader.get_attribute("position"))
-
-		self.image_pack_buffer = gl.glGenBuffers(1)
-		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)
-		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.options.pixels_count * 3, None, gl.GL_STREAM_READ)
-		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
 
 		self.tiles = self.__calc_tiles()
 		self.render_passes = []
@@ -1177,6 +1227,11 @@ class Renderer(object):
 		self.mouse_state = [0, 0, 0, 0]
 		self.mouse_pressed = False
 		self.pressed_keys = set()
+
+		self.vertex_surface_buffer = None
+		self.vertex_surface_array = None
+		self.shader = None
+		self.image_pack_buffer = None
 
 		for render_pass_definition in shader_definition['renderpass']:
 			if render_pass_definition['type'] == 'common':
@@ -1202,6 +1257,34 @@ class Renderer(object):
 			raise RuntimeError("Output is not defined")
 
 		self.frame = 0
+		self.init_gl()
+
+	def init_gl(self, restore=False):
+		self.vertex_surface_buffer = gl.glGenBuffers(1)
+		self.vertex_surface_array = gl.glGenVertexArrays(1)
+		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
+		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface_data.itemsize * len(self.vertex_surface_data), self.vertex_surface_data.tobytes(), gl.GL_DYNAMIC_DRAW)
+
+		self.shader = Shader(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER)
+
+		self.shader.use()
+
+		self.image_pack_buffer = gl.glGenBuffers(1)
+		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self.image_pack_buffer)
+		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.options.pixels_count * 3, None, gl.GL_STREAM_READ)
+		gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+
+		for render_pass in self.render_passes:
+			render_pass.init_gl(restore=restore)
+
+	def clean_gl(self):
+		for render_pass in self.render_passes:
+			render_pass.clean_gl()
+
+		gl.glDeleteBuffers(1, [self.image_pack_buffer])
+		self.shader.destroy()
+		gl.glDeleteVertexArrays(1, [self.vertex_surface_array])
+		gl.glDeleteBuffers(1, [self.vertex_surface_buffer])
 
 	def display(self):
 		self.render_offscreen()
@@ -1403,21 +1486,33 @@ def render(args):
 		egl_config_attribs = {
 			egl.EGL_CONTEXT_MAJOR_VERSION: 3,
 			egl.EGL_CONTEXT_MINOR_VERSION: 3,
-			egl.EGL_CONTEXT_OPENGL_PROFILE_MASK: egl. EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+			egl.EGL_CONTEXT_OPENGL_PROFILE_MASK: egl.EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+			egl.EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY: egl.EGL_LOSE_CONTEXT_ON_RESET,
 		}
 		egl_config_attribs = egl_convert_to_dict_array(egl_config_attribs)
-		context = egl.eglCreateContext(display, egl_config, egl.EGL_NO_CONTEXT, egl_config_attribs)
-		if not context:
-			sys.stderr.write("EGL context not created\n")
-			sys.exit()
-		if not egl.eglMakeCurrent(display, egl.EGL_NO_SURFACE, egl.EGL_NO_SURFACE, context):
-			sys.stderr.write("eglMakeCurrent call failed\n")
-			sys.exit()
+
+		def create_egl_context():
+			context = egl.eglCreateContext(display, egl_config, egl.EGL_NO_CONTEXT, egl_config_attribs)
+			if not context:
+				sys.stderr.write("EGL context not created\n")
+				sys.exit()
+			if not egl.eglMakeCurrent(display, egl.EGL_NO_SURFACE, egl.EGL_NO_SURFACE, context):
+				sys.stderr.write("eglMakeCurrent call failed\n")
+				sys.exit()
+			return context
+
+		context = create_egl_context()
 
 		renderer = Renderer(json.load(options.file), options)
 		while True:
 			try:
 				renderer.render_offscreen()
+				err = robustness.glGetGraphicsResetStatusARB()
+				if err:
+					egl.eglDestroyContext(display, context)
+					#renderer.clean_gl()
+					context = create_egl_context()
+					renderer.init_gl(restore=True)
 			except KeyboardInterrupt:
 				sys.stdout.write("Stopping\n")
 				sys.stdout.flush()

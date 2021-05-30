@@ -1463,35 +1463,37 @@ def render(args):
 		sys.stdout.write(f"EGL: {major.value}.{minor.value}\n")
 		egl_config = egl.EGLConfig()
 		num_configs = egl.EGLint()
+
 		def egl_convert_to_dict_array(attrs):
 			attrs = sum(([k, v] for k, v in attrs.items()), []) + [egl.EGL_NONE]
 			return (egl.EGLint * len(attrs))(*attrs)
-		egl_config_attribs = {
-			egl.EGL_RED_SIZE: 8,
-			egl.EGL_GREEN_SIZE: 8,
-			egl.EGL_BLUE_SIZE: 8,
-			egl.EGL_ALPHA_SIZE: 8,
-			egl.EGL_DEPTH_SIZE: egl.EGL_DONT_CARE,
-			egl.EGL_STENCIL_SIZE: egl.EGL_DONT_CARE,
-			egl.EGL_RENDERABLE_TYPE: egl.EGL_OPENGL_BIT,
-			egl.EGL_SURFACE_TYPE: egl.EGL_DONT_CARE,
-		}
-		egl_config_attribs = egl_convert_to_dict_array(egl_config_attribs)
-		if not egl.eglChooseConfig(display, egl_config_attribs, ctypes.pointer(egl_config), 1, ctypes.pointer(num_configs)) or num_configs.value == 0:
-			sys.stderr.write("EGL config not nfound\n")
-			sys.exit()
-		if not egl.eglBindAPI(egl.EGL_OPENGL_API):
-			sys.stderr.write("OpenGL API not bound\n")
-			sys.exit()
-		egl_config_attribs = {
-			egl.EGL_CONTEXT_MAJOR_VERSION: 3,
-			egl.EGL_CONTEXT_MINOR_VERSION: 3,
-			egl.EGL_CONTEXT_OPENGL_PROFILE_MASK: egl.EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
-			egl.EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY: egl.EGL_LOSE_CONTEXT_ON_RESET,
-		}
-		egl_config_attribs = egl_convert_to_dict_array(egl_config_attribs)
 
 		def create_egl_context():
+			egl_config_attribs = {
+				egl.EGL_RED_SIZE: 8,
+				egl.EGL_GREEN_SIZE: 8,
+				egl.EGL_BLUE_SIZE: 8,
+				egl.EGL_ALPHA_SIZE: 8,
+				egl.EGL_DEPTH_SIZE: egl.EGL_DONT_CARE,
+				egl.EGL_STENCIL_SIZE: egl.EGL_DONT_CARE,
+				egl.EGL_RENDERABLE_TYPE: egl.EGL_OPENGL_BIT,
+				egl.EGL_SURFACE_TYPE: egl.EGL_DONT_CARE,
+			}
+			egl_config_attribs = egl_convert_to_dict_array(egl_config_attribs)
+			if not egl.eglChooseConfig(display, egl_config_attribs, ctypes.pointer(egl_config), 1, ctypes.pointer(num_configs)) or num_configs.value == 0:
+				sys.stderr.write("EGL config not nfound\n")
+				sys.exit()
+			if not egl.eglBindAPI(egl.EGL_OPENGL_API):
+				sys.stderr.write("OpenGL API not bound\n")
+				sys.exit()
+			egl_config_attribs = {
+				egl.EGL_CONTEXT_MAJOR_VERSION: 3,
+				egl.EGL_CONTEXT_MINOR_VERSION: 3,
+				egl.EGL_CONTEXT_OPENGL_PROFILE_MASK: egl.EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+				egl.EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY: egl.EGL_LOSE_CONTEXT_ON_RESET,
+			}
+			egl_config_attribs = egl_convert_to_dict_array(egl_config_attribs)
+
 			context = egl.eglCreateContext(display, egl_config, egl.EGL_NO_CONTEXT, egl_config_attribs)
 			if not context:
 				sys.stderr.write("EGL context not created\n")
@@ -1508,11 +1510,22 @@ def render(args):
 			try:
 				renderer.render_offscreen()
 				err = robustness.glGetGraphicsResetStatusARB()
+				print("Err", err)
 				if err:
 					egl.eglDestroyContext(display, context)
+					#sys.exit()
 					#renderer.clean_gl()
+
+					egl.eglTerminate(display)
+
+					display = egl.eglGetDisplay(egl.EGL_DEFAULT_DISPLAY)
+					major, minor = egl.EGLint(), egl.EGLint()
+					egl.eglInitialize(display, ctypes.pointer(major), ctypes.pointer(minor))
+					sys.stdout.write(f"EGL: {major.value}.{minor.value}\n")
+
 					context = create_egl_context()
 					renderer.init_gl(restore=True)
+					renderer.render_offscreen()
 			except KeyboardInterrupt:
 				sys.stdout.write("Stopping\n")
 				sys.stdout.flush()

@@ -1177,6 +1177,7 @@ class Renderer(object):
 		self.mouse_state = [0, 0, 0, 0]
 		self.mouse_pressed = False
 		self.pressed_keys = set()
+		self.frame_start = time.monotonic()
 
 		for render_pass_definition in shader_definition['renderpass']:
 			if render_pass_definition['type'] == 'common':
@@ -1283,13 +1284,13 @@ class Renderer(object):
 			uniforms['channel_resolution'] = [channel.get_resolution() for channel in render_pass.inputs]
 			render_pass.update_uniforms(uniforms)
 
-		frame_start = time.monotonic()
 		for render_pass in self.render_passes:
 			if not isinstance(render_pass, VideoRenderPass):
 				render_pass.render()
 		gl.glFinish()
 		frame_end = time.monotonic()
-		self.frame_durations = self.frame_durations[-FRAME_DURATION_AVERAGE+1:] + [frame_end - frame_start]
+		self.frame_durations = self.frame_durations[-FRAME_DURATION_AVERAGE+1:] + [frame_end - self.frame_start]
+		self.frame_start = frame_end
 
 		for render_pass in self.render_passes:
 			if isinstance(render_pass, VideoRenderPass):

@@ -73,20 +73,20 @@ RENDER_MAIN_TEMPLATE = """
 RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 	iTime = xxiTime;
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
-	vec2 aaOffset;
-	vec3 rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
-	rnd = fract(rnd * .1031);
-	rnd += dot(rnd, rnd.yzx + 33.33);
-	float timeOffset = fract((rnd.x + rnd.y) * rnd.z) / {fps} / ({x} * {y}) * {shutter_speed};
+	vec2 _render_aaOffset;
+	vec3 _render_rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
+	_render_rnd = fract(_render_rnd * .1031);
+	_render_rnd += dot(_render_rnd, _render_rnd.yzx + 33.33);
+	float _render_timeOffset = fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x} * {y}) * {shutter_speed};
 
 	for (int i = 0; i < {x}; ++i) {{
 		for (int j = 0; j < {y}; ++j) {{
-			aaOffset = vec2(float(i) / {x} - 0.5 + 0.5/{x}, float(j) / {y} - 0.5 + 0.5/{y});
+			_render_aaOffset = vec2(float(i) / {x} - 0.5 + 0.5/{x}, float(j) / {y} - 0.5 + 0.5/{y});
 			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
-			mainImage(passColor, gl_FragCoord.xy + iTileOffset + aaOffset);
+			mainImage(passColor, gl_FragCoord.xy + iTileOffset + _render_aaOffset);
 			passColor.w = 1.0;
 			color += passColor;
-			iTime = xxiTime + (1.0 / 60.0) * (i * {y} + j) / ({x} * {y}) + timeOffset;
+			iTime = xxiTime + (1.0 / 60.0) * (i * {y} + j) / ({x} * {y}) + _render_timeOffset;
 		}}
 	}}
 

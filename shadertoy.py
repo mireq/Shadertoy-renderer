@@ -223,7 +223,7 @@ void main()
 
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb24 -i {input} {more_inputs} -vf vflip  -y -crf 18 -c:v libx264 -c:a flac -pix_fmt yuv420p -preset slow -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -vf vflip -y -crf 18 -c:v libx264 -c:a flac -pix_fmt yuv420p10le -preset medium -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 
@@ -975,7 +975,7 @@ class VideoRenderPass(BaseRenderPass):
 		}
 
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
-		self.current_frame = array.array('B', [0] * self.renderer.options.w * self.renderer.options.h * 3)
+		self.current_frame = array.array('H', [0] * self.renderer.options.w * self.renderer.options.h * 3)
 		self.motion_blur = self.video_framerate_controller.out_fps <= self.video_framerate_controller.fps
 		self.framebuffer = None
 		self.image = None
@@ -989,7 +989,7 @@ class VideoRenderPass(BaseRenderPass):
 
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
-			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_SHORT, None)
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
 			gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.image, 0)
@@ -1032,13 +1032,13 @@ class VideoRenderPass(BaseRenderPass):
 			self.current_frame_number = 0
 			if self.motion_blur or self.dithering:
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
-				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0])
+				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, self.current_frame.buffer_info()[0])
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 			else:
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer)
-				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, self.current_frame.buffer_info()[0])
+				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, self.current_frame.buffer_info()[0])
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())

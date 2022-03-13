@@ -92,7 +92,7 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 
 	color = color / ({x} * {y});
 """
-IMAGE_FRAGMENT_SHADER_TEMPLATE = """#version 330
+IMAGE_FRAGMENT_SHADER_TEMPLATE = """#version glsl_version
 {inputs}
 {redefinitions}
 {sampler}
@@ -112,7 +112,7 @@ void main(void)
 	outColor = color;
 }}
 """
-BUFFER_FRAGMENT_SHADER_TEMPLATE = """#version 330
+BUFFER_FRAGMENT_SHADER_TEMPLATE = """#version glsl_version
 {inputs}
 {redefinitions}
 {sampler}
@@ -131,7 +131,7 @@ void main(void)
 	outColor = color;
 }}
 """
-SOUND_FRAGMENT_SHADER_TEMPLATE = """#version 330
+SOUND_FRAGMENT_SHADER_TEMPLATE = """#version glsl_version
 {inputs}
 
 {redefinitions}
@@ -156,7 +156,7 @@ void main(void)
 }}
 """
 
-IDENTITY_VERTEX_SHADER = """#version 330
+IDENTITY_VERTEX_SHADER = """#version glsl_version
 
 attribute vec2 position;
 
@@ -166,7 +166,7 @@ void main()
 }
 """
 
-TEXTURE_VERTEX_SHADER = """#version 330
+TEXTURE_VERTEX_SHADER = """#version glsl_version
 
 attribute vec2 position;
 varying vec2 texcoord;
@@ -176,7 +176,7 @@ void main()
 	texcoord = position * vec2(0.5, 0.5) + vec2(0.5);
 }"""
 
-TEXTURE_FRAGMENT_SHADER = """#version 330
+TEXTURE_FRAGMENT_SHADER = """#version glsl_version
 
 varying vec2 texcoord;
 uniform sampler2D texture;
@@ -185,7 +185,7 @@ void main()
 	gl_FragColor = texture2D(texture, texcoord);
 }
 """
-VIDEO_FRAGMENT_SHADER = """#version 330
+VIDEO_FRAGMENT_SHADER = """#version glsl_version
 
 varying vec2 texcoord;
 uniform int average_frames;
@@ -796,7 +796,11 @@ class RenderPass(BaseRenderPass):
 			raise NotImplementedError("Shader pass %s not implemented" % pass_definition['type'])
 
 	def make_shader(self):
-		shader = Shader(self.get_vertex_shader(), self.get_fragment_shader(), name=self.name)
+		shader = Shader(
+			self.renderer.process_shader(self.get_vertex_shader()),
+			self.renderer.process_shader(self.get_fragment_shader()),
+			name=self.name
+		)
 		shader.use()
 
 		#gl.glEnableVertexAttribArray(shader.get_attribute("position"))
@@ -996,7 +1000,10 @@ class VideoRenderPass(BaseRenderPass):
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
-			self.shader = Shader(TEXTURE_VERTEX_SHADER, VIDEO_FRAGMENT_SHADER)
+			self.shader = Shader(
+				self.renderer.process_shader(TEXTURE_VERTEX_SHADER),
+				self.renderer.process_shader(VIDEO_FRAGMENT_SHADER)
+			)
 			self.shader.use()
 			gl.glUniform1i(self.shader.get_uniform("dithering"), self.dithering)
 
@@ -1139,6 +1146,7 @@ class RendererOptions(object):
 		self.antialias = args.antialias
 		self.shutter_speed = args.shutter_speed
 		self.dithering = args.dithering
+		self.glsl_version = args.glsl_version
 
 
 class Renderer(object):
@@ -1150,7 +1158,10 @@ class Renderer(object):
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_surface_buffer)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface_data.itemsize * len(self.vertex_surface_data), self.vertex_surface_data.tobytes(), gl.GL_DYNAMIC_DRAW)
 
-		self.shader = Shader(TEXTURE_VERTEX_SHADER, TEXTURE_FRAGMENT_SHADER)
+		self.shader = Shader(
+			self.process_shader(TEXTURE_VERTEX_SHADER),
+			self.process_shader(TEXTURE_FRAGMENT_SHADER)
+		)
 
 		self.shader.use()
 		#gl.glBindVertexArray(gl.glGenVertexArrays(1))
@@ -1325,6 +1336,9 @@ class Renderer(object):
 
 	def disable_surface_vertex_attrib_array(self, attribute):
 		gl.glDisableVertexAttribArray(attribute)
+
+	def process_shader(self, shader):
+		return shader.replace('#version glsl_version', '#version ' + self.options.glsl_version)
 
 	def __calc_tiles(self):
 		tiled_width = (self.options.w + self.options.tile_w - 1) // self.options.tile_w
@@ -1524,6 +1538,7 @@ def main():
 	parser_render.add_argument('--antialias', type=parse_resolution, default=(1, 1), help="Antialiasing")
 	parser_render.add_argument('--shutter-speed', type=float, default=1.0, help="Shutter speed (only if antialias is enabled)")
 	parser_render.add_argument('--dithering', type=int, default=0, help="Enable dithering")
+	parser_render.add_argument('--glsl-version', type=str, default='330', help="OpenGL shading language version")
 
 	parser_extract_sources = subparsers.add_parser('extract_sources', help="Extract shader sources")
 	parser_extract_sources.add_argument('file', type=argparse.FileType('r'), help="Shader file")

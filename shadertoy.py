@@ -6,10 +6,12 @@ import collections
 import contextlib
 import ctypes
 import enum
+import fractions
 import hashlib
 import io
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -39,6 +41,10 @@ except NotImplementedError:
 logger = logging.getLogger(__name__)
 
 NR_CHANNELS = 4
+AUDIO_FRAME_SIZE = 512
+AUDIO_FFT_SIZE = 2048
+AUDIO_FFT_SMOOTHING = 0.8
+AUDIO_BYTES = 2
 CACHE_DIR = os.path.join(os.path.expanduser('~'), '.cache', 'shadertoy')
 
 COMMON_DEFINITIONS = """
@@ -147,7 +153,7 @@ out vec4 outColor;
 
 void main(void)
 {{
-	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*512.0)/iSampleRate;
+	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*AUDIO_FRAME_SIZE.0)/iSampleRate;
 	vec2 y = mainSound(t);
 	vec2 v = floor((0.5+0.5*y)*65536.0);
 	vec2 vl = mod(v,256.0)/255.0;
@@ -226,6 +232,7 @@ FFMPEG_BINARY = 'ffmpeg'
 FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -vf vflip -y -crf 18 -c:v libx264 -c:a flac -pix_fmt yuv420p10le -preset medium -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
+FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -loglevel error {output}'
 
 FRAME_DURATION_AVERAGE = 60
 
@@ -299,36 +306,36 @@ def build_shell_command(cmd, replacements):
 	return new_params
 
 
-@contextlib.contextmanager
-def open_asset(path, base=None):
+def get_asset_filename(path, base=None):
 	if path.startswith('file://'):
-		path = to_local_filename(path[len('file://'):], base)
-		fp = open(path, 'rb')
-		try:
-			yield fp
-		finally:
-			fp.close()
+		return to_local_filename(path[len('file://'):], base)
 	elif path.startswith('/'):
 		basename = os.path.basename(path)
 		cache_dir = os.path.join(CACHE_DIR, 'assets')
 		prefix = hashlib.sha1(path[:-len(basename)].encode('utf-8')).hexdigest()
 		basename = prefix + '_' + basename
 		cached_name = os.path.join(cache_dir, basename)
+		if os.path.exists(cached_name):
+			return cached_name
 		try:
-			fp = open(cached_name, 'rb')
-			yield fp
-		except FileNotFoundError:
-			try:
-				os.makedirs(cache_dir)
-			except FileExistsError:
-				pass
-			urllib.request.urlretrieve('https://www.shadertoy.com' + path, cached_name)
-			fp = open(cached_name, 'rb')
-			yield fp
-		finally:
-			fp.close
+			os.makedirs(cache_dir)
+		except FileExistsError:
+			pass
+		urllib.request.urlretrieve('https://www.shadertoy.com' + path, cached_name)
+		return cached_name
 	else:
 		raise NotImplementedError()
+
+
+@contextlib.contextmanager
+def open_asset(path, base=None, leave_open=False):
+	cached_name = get_asset_filename(path, base)
+	try:
+		fp = open(cached_name, 'rb')
+		yield fp
+	finally:
+		if not leave_open:
+			fp.close()
 
 
 class PipeIO(object):
@@ -380,8 +387,9 @@ class MediaSourceType(enum.Enum):
 
 
 class MediaSource(object):
-	def __init__(self, fp, media_type=MediaSourceType.image, vflip=False):
+	def __init__(self, fp, renderer, media_type=MediaSourceType.image, vflip=False):
 		self.__fp = fp
+		self.__renderer = renderer
 		self.__stream_info = None
 		self.__vflip = vflip
 		self.media_type = media_type
@@ -402,10 +410,19 @@ class MediaSource(object):
 				break
 		self.width = 0
 		self.height = 0
+		self.sample_rate = 44100
+
+		self.current_audio_sample = 0
+		self.current_audio_buffer = None
+		self.current_fft_buffer = b''
+		self.current_fft = None
+
 		if self.__stream_info is not None:
 			if media_type == MediaSourceType.image:
 				self.width = self.__stream_info['width']
 				self.height = self.__stream_info['height']
+			elif media_type == MediaSourceType.audio:
+				self.sample_rate = int(self.__stream_info['sample_rate'])
 
 	def __ffmpeg_init(self):
 		if self.__ffmpeg is None:
@@ -415,23 +432,65 @@ class MediaSource(object):
 				'output': 'pipe:1',
 				'filters': None,
 			}
-			if self.__vflip:
-				replacements['filters'] = ['-vf', 'vflip']
-			cmd = build_shell_command(FFMPEG_VIDEO_SOURCE, replacements)
+			if self.media_type == MediaSourceType.image:
+				if self.__vflip:
+					replacements['filters'] = ['-vf', 'vflip']
+				cmd = build_shell_command(FFMPEG_VIDEO_SOURCE, replacements)
+			else:
+				replacements.pop('filters')
+				cmd = build_shell_command(FFMPEG_AUDIO_SOURCE, replacements)
 			self.__fp.seek(0)
 			self.__ffmpeg = subprocess.Popen(cmd, stdin=self.__fp, stdout=subprocess.PIPE)
 
 	def get_frame(self):
-		if self.media_type != MediaSourceType.image:
-			raise RuntimeError("Wrong media type")
 		self.__ffmpeg_init()
-		data_size = self.width * self.height * 4
-		data = self.__ffmpeg.stdout.read(data_size)
-		if len(data) == data_size:
-			self.__ffmpeg.kill()
-			self.__ffmpeg = None
-			self.__ffmpeg_init()
+		if self.media_type == MediaSourceType.image:
+			data_size = self.width * self.height * 4
 			data = self.__ffmpeg.stdout.read(data_size)
+			if len(data) == data_size:
+				self.__ffmpeg.kill()
+				self.__ffmpeg = None
+				self.__ffmpeg_init()
+				data = self.__ffmpeg.stdout.read(data_size)
+		else:
+			import numpy as np
+
+			audio_buffer_bytes = AUDIO_FRAME_SIZE * AUDIO_BYTES
+			fft_buffer_bytes = AUDIO_FFT_SIZE * AUDIO_BYTES
+
+			requested_sample = math.floor(self.sample_rate * self.__renderer.exact_time)
+			additional_size = (requested_sample - self.current_audio_sample) * AUDIO_BYTES
+			self.current_audio_sample = requested_sample
+
+			if self.current_audio_buffer is None:
+				self.current_audio_buffer = b'\0' * audio_buffer_bytes
+			if self.current_fft is None:
+				self.current_fft = np.zeros(AUDIO_FRAME_SIZE)
+
+			if additional_size:
+				additional_data = self.__ffmpeg.stdout.read(additional_size)
+				if len(additional_data) != additional_size:
+					additional_data = additional_data.ljust(additional_size, b'\0')
+				self.current_fft_buffer += additional_data
+				self.current_audio_buffer = (self.current_audio_buffer + additional_data)[-audio_buffer_bytes:]
+
+			while len(self.current_fft_buffer) >= fft_buffer_bytes:
+				fft = self.current_fft_buffer[:fft_buffer_bytes]
+				self.current_fft_buffer = self.current_fft_buffer[audio_buffer_bytes:]
+				fft = np.frombuffer(fft, dtype=np.uint16).astype(float)
+				fft = np.fft.rfft(fft)[1:AUDIO_FRAME_SIZE+1] / (AUDIO_FFT_SIZE * 65535)
+				fft = np.abs(fft)
+				fft[fft == 0] = 0.0000000001
+				fft = 20.*np.log10(np.abs(fft)) # decibels
+
+				self.current_fft = (self.current_fft * AUDIO_FFT_SMOOTHING) + (fft * (1 - AUDIO_FFT_SMOOTHING))
+
+			fft = self.current_fft.copy()
+			db_min, db_max = np.percentile(fft, [0.01, 99.99])
+			if db_min != db_max:
+				fft = (fft - db_min) * (65535.0 / (db_max - db_min))
+			db_min, db_max = np.percentile(fft, [0.0001, 99.9999])
+			data = np.clip(fft, 0, 65535).astype(np.uint16).tobytes() + self.current_audio_buffer
 		return data
 
 
@@ -537,6 +596,8 @@ class Input(object):
 	def create(renderer, input_definition):
 		if input_definition['type'] == 'texture':
 			return TextureInput(renderer, input_definition)
+		elif input_definition['type'] == 'music':
+			return MusicInput(renderer, input_definition)
 		elif input_definition['type'] == 'cubemap':
 			return CubeMapInput(renderer, input_definition)
 		elif input_definition['type'] == 'buffer':
@@ -583,7 +644,7 @@ class TextureInput(Input):
 			self._setup_sampler(gl.GL_TEXTURE_2D)
 
 			with open_asset(self.filepath, self.renderer.options.shader_filename) as fp:
-				src = MediaSource(fp, vflip=self.vflip)
+				src = MediaSource(fp, self.renderer, vflip=self.vflip)
 				frame = src.get_frame()
 				self.width = src.width
 				self.height = src.height
@@ -611,6 +672,34 @@ class TextureInput(Input):
 		return gl.GL_SRGB8_ALPHA8 if self.srgb else gl.GL_RGBA8
 
 
+class MusicInput(TextureInput):
+	def __init__(self, renderer, input_definition):
+		super().__init__(renderer, input_definition)
+		self.texture = None
+		self.media_src = None
+
+	def load_texture(self):
+		if self.texture is None:
+			self.texture = gl.glGenTextures(1)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+			self._setup_sampler(gl.GL_TEXTURE_2D)
+
+			with open_asset(self.filepath, self.renderer.options.shader_filename, leave_open=True) as fp:
+				self.media_src = MediaSource(fp, self.renderer, media_type=MediaSourceType.audio)
+		frame = self.media_src.get_frame()
+		if frame:
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, self._internal_format(), AUDIO_FRAME_SIZE, 2, 0, gl.GL_RED, gl.GL_UNSIGNED_SHORT, frame)
+			if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
+				gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+
+	def get_resolution(self):
+		return [AUDIO_FRAME_SIZE, 2, 1]
+
+	def _internal_format(self):
+		return gl.GL_R16
+
+
 class CubeMapInput(TextureInput):
 	def __init__(self, renderer, input_definition):
 		super().__init__(renderer, input_definition)
@@ -627,7 +716,7 @@ class CubeMapInput(TextureInput):
 			for i in range(6):
 				filepath = (f'_{i}' if i else '').join(os.path.splitext(self.filepath))
 				with open_asset(filepath, self.renderer.options.shader_filename) as fp:
-					src = MediaSource(fp, vflip=self.vflip)
+					src = MediaSource(fp, self.renderer, vflip=self.vflip)
 					frame = src.get_frame()
 					if i == 0:
 						self.depth = src.width
@@ -962,6 +1051,18 @@ class VideoRenderPass(BaseRenderPass):
 			os.set_inheritable(w, True)
 			audio_inputs.append(PipeIO(r, w, 2))
 			more_inputs += ['-f', 'u16le', '-sample_rate', str(renderer.sound.sample_rate), '-channels', '2', '-codec:a', 'pcm_u16le', '-channel_layout', 'stereo', '-i', 'pipe:' + str(r)]
+
+		channels_visited = set()
+		for render_pass in self.renderer.render_passes:
+			for input_channel in render_pass.inputs:
+				if input_channel.id in channels_visited:
+					continue
+				channels_visited.add(input_channel.id)
+				if isinstance(input_channel, MusicInput):
+					filename = get_asset_filename(input_channel.filepath, self.renderer.options.shader_filename)
+					more_inputs += ['-i', filename]
+					print(filename)
+
 		replacements = {
 			'ffmpeg': FFMPEG_BINARY,
 			'resolution': f'{self.renderer.options.w}x{self.renderer.options.h}',
@@ -1068,7 +1169,7 @@ class BufferRenderPass(ImageRenderPass):
 
 class SoundRenderPass(RenderPass):
 	_fragment_shader_template = SOUND_FRAGMENT_SHADER_TEMPLATE
-	sample_size = 512
+	sample_size = AUDIO_FRAME_SIZE
 	sample_rate = 44100
 	current_sample = 0
 	buffers = queue.Queue(maxsize=2)
@@ -1113,7 +1214,7 @@ class SoundRenderPass(RenderPass):
 			buf = array.array('B', [0] * self.sample_size * self.sample_size * 4)
 			gl.glReadPixels(0, 0, self.sample_size, self.sample_size, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, buf.buffer_info()[0])
 			self.buffers.put(buf)
-			self.current_sample += 512*512
+			self.current_sample += AUDIO_FRAME_SIZE*AUDIO_FRAME_SIZE
 
 	def get_texture(self):
 		return Texture(gl.GL_TEXTURE_2D, self.sample)
@@ -1184,6 +1285,7 @@ class Renderer(object):
 		self.start_time = time.monotonic()
 		self.current_time = self.start_time
 		self.last_time = self.start_time
+		self.exact_time = fractions.Fraction(0)
 		self.frame_durations = []
 		self.mouse_state = [0, 0, 0, 0]
 		self.mouse_pressed = False
@@ -1284,9 +1386,11 @@ class Renderer(object):
 		if self.options.render_video is not None or self.options.benchmark:
 			uniforms['time'] = self.frame / self.options.fps
 			uniforms['time_delta'] = 1.0 / self.options.fps
+			self.exact_time = fractions.Fraction(self.frame, self.options.fps)
 		else:
 			uniforms['time'] = self.current_time - self.start_time
 			uniforms['time_delta'] = self.current_time - self.last_time
+			self.exact_time = fractions.Fraction(self.current_time - self.start_time)
 		uniforms['frame'] = self.frame
 		uniforms['mouse'] = self.mouse_state
 

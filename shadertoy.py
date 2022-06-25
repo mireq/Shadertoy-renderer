@@ -229,7 +229,7 @@ void main()
 
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -vf vflip -y -crf 18 -c:v libx264 -c:a flac -pix_fmt yuv420p10le -preset medium -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -vf vflip -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt yuv420p10le -preset {preset} {extra_args} -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -loglevel error {output}'
@@ -1061,8 +1061,11 @@ class VideoRenderPass(BaseRenderPass):
 				if isinstance(input_channel, MusicInput):
 					filename = get_asset_filename(input_channel.filepath, self.renderer.options.shader_filename)
 					more_inputs += ['-i', filename]
-					print(filename)
 
+		CODECS = {
+			'h264': 'libx264',
+			'h265': 'libx265',
+		}
 		replacements = {
 			'ffmpeg': FFMPEG_BINARY,
 			'resolution': f'{self.renderer.options.w}x{self.renderer.options.h}',
@@ -1070,7 +1073,14 @@ class VideoRenderPass(BaseRenderPass):
 			'framerate': str(self.renderer.options.render_video_fps),
 			'output': self.renderer.options.render_video,
 			'more_inputs': more_inputs,
+			'codec': CODECS[self.renderer.options.render_video_codec],
+			'preset': self.renderer.options.render_video_preset,
+			'crf': str(self.renderer.options.render_video_crf),
 		}
+		if self.renderer.options.render_video_args:
+			replacements['extra_args'] = shlex.split(self.renderer.options.render_video_args)
+		else:
+			replacements['extra_args'] = []
 		cmd = build_shell_command(FFMPEG_CMDLINE, replacements)
 		self.dithering = renderer.options.dithering
 		self.ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE, pass_fds=list(i.r for i in audio_inputs))
@@ -1237,6 +1247,10 @@ class RendererOptions(object):
 		self.fps = args.fps
 		self.render_video = args.render_video
 		self.render_video_fps = args.render_video_fps
+		self.render_video_codec = args.render_video_codec
+		self.render_video_preset = args.render_video_preset
+		self.render_video_crf = args.render_video_crf
+		self.render_video_args = args.render_video_args
 		self.benchmark = args.benchmark
 		if (args.render_video or self.benchmark) and self.fps is None:
 			self.fps = 60
@@ -1636,6 +1650,10 @@ def main():
 	parser_render.add_argument('--fps', type=int, help="Render frame rate")
 	parser_render.add_argument('--render-video', help="Path to rendered video file")
 	parser_render.add_argument('--render-video-fps', type=int, help="Video frame rate")
+	parser_render.add_argument('--render-video-codec', type=str, choices=['h264', 'h265'], default='h264', help="Video codec")
+	parser_render.add_argument('--render-video-preset', type=str, default='medium', help="FFMpeg preset settings")
+	parser_render.add_argument('--render-video-crf', type=int, default=20, help="Constant rate factor, less is better")
+	parser_render.add_argument('--render-video-args', type=str, help="Extra arguments for ffmpeg")
 	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
 	parser_render.add_argument('--quiet', action='store_true', help="Queit")
 	parser_render.add_argument('--no-window', action='store_true', help="No window")

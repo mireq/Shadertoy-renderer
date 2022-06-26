@@ -1285,6 +1285,7 @@ class RendererOptions(object):
 		self.shutter_speed = args.shutter_speed
 		self.dithering = args.dithering
 		self.glsl_version = args.glsl_version
+		self.max_duration = args.max_duration
 
 
 class Renderer(object):
@@ -1328,6 +1329,7 @@ class Renderer(object):
 		self.mouse_pressed = False
 		self.pressed_keys = set()
 		self.frame_start = time.monotonic()
+		self.shutdown = False
 
 		for render_pass_definition in shader_definition['renderpass']:
 			if render_pass_definition['type'] == 'common':
@@ -1359,6 +1361,10 @@ class Renderer(object):
 		self.render_display()
 
 	def render_offscreen(self):
+		if self.options.max_duration is not None and self.exact_time > self.options.max_duration:
+			raise SystemExit(0)
+		if self.shutdown:
+			raise SystemExit(0)
 		try:
 			gl.glViewport(0, 0, self.options.w, self.options.h)
 			self.render_frame()
@@ -1391,7 +1397,7 @@ class Renderer(object):
 	def keyboard_down(self, key, x, y):
 		if key == b'\x1b':
 			self.quit()
-			sys.exit()
+			self.shutdown = True
 		self.pressed_keys.add(key)
 		for rp in self.render_passes:
 			for rp_input in rp.inputs:
@@ -1399,7 +1405,7 @@ class Renderer(object):
 					rp_input.keyboard(key, True)
 
 	def keyboard_up(self, key, x, y):
-		self.pressed_keys.remove(key)
+		self.pressed_keys.discard(key)
 		for rp in self.render_passes:
 			for rp_input in rp.inputs:
 				if isinstance(rp_input, KeyboardInput):
@@ -1520,6 +1526,20 @@ def parse_resolution(val):
 	return (width, height)
 
 
+def parse_duration(val):
+	msg = "Duration in wrong format, expected h:m:s"
+	rx_match = re.match(r'^(?:(\d+):)?(?:(\d+):)?(?:(\d+))$', val)
+	if rx_match is None:
+		raise argparse.ArgumentTypeError(msg)
+	seconds = rx_match.group(3)
+	minutes = rx_match.group(2)
+	hours = rx_match.group(1)
+	seconds = int(seconds) if seconds else 0
+	minutes = int(minutes) if minutes else 0
+	hours = int(hours) if hours else 0
+	return hours * 3600 + minutes * 60 + seconds
+
+
 def parse_shadertoy_url(val):
 	val = val.split('?')[0]
 	match = re.match(r'https://www.shadertoy.com/view/(\w+)', val)
@@ -1577,7 +1597,7 @@ def render(args):
 		while True:
 			try:
 				renderer.render_offscreen()
-			except KeyboardInterrupt:
+			except (KeyboardInterrupt, SystemExit):
 				sys.stdout.write("Stopping\n")
 				sys.stdout.flush()
 				renderer.quit()
@@ -1612,7 +1632,7 @@ def render(args):
 				glut.glutMainLoopEvent()
 				if not options.no_window:
 					glut.glutPostRedisplay()
-			except KeyboardInterrupt:
+			except (KeyboardInterrupt, SystemExit):
 				sys.stdout.write("Stopping\n")
 				sys.stdout.flush()
 				renderer.quit()
@@ -1687,6 +1707,7 @@ def main():
 	parser_render.add_argument('--shutter-speed', type=float, default=1.0, help="Shutter speed (only if antialias is enabled)")
 	parser_render.add_argument('--dithering', type=int, default=0, help="Enable dithering")
 	parser_render.add_argument('--glsl-version', type=str, default='330', help="OpenGL shading language version")
+	parser_render.add_argument('--max-duration', type=parse_duration, help="Maximum video duration (HH:MM:SS)")
 
 	parser_extract_sources = subparsers.add_parser('extract_sources', help="Extract shader sources")
 	parser_extract_sources.add_argument('file', type=argparse.FileType('r'), help="Shader file")

@@ -528,9 +528,9 @@ class Shader(object):
 			if line_number:
 				line_number = int(line_number.group(1))
 				code = code.splitlines()
-				sys.stdout.write('> %s\n' % code[line_number])
+				sys.stdout.write('> %s\n' % code[line_number - 1])
 				sys.stdout.flush()
-			raise RuntimeError("Shader %s not compiled: %s" % (self.__name, error))
+			raise RuntimeError("Shader %s not compiled:\n%s" % (self.__name, error))
 		gl.glAttachShader(self.program, shader)
 
 	def __link_shader(self):

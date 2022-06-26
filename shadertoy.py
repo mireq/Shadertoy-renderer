@@ -154,7 +154,7 @@ out vec4 outColor;
 
 void main(void)
 {{
-	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*AUDIO_FRAME_SIZE.0)/iSampleRate;
+	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*512.0)/iSampleRate;
 	vec2 y = mainSound(t);
 	vec2 v = floor((0.5+0.5*y)*65536.0);
 	vec2 vl = mod(v,256.0)/255.0;

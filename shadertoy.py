@@ -227,6 +227,7 @@ void main()
 }
 """
 
+YT_DL_BINARY = 'yt-dlp'
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
 FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -vf vflip -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt yuv420p10le -preset {preset} {extra_args} -loglevel error {output}'
@@ -307,23 +308,30 @@ def build_shell_command(cmd, replacements):
 
 
 def get_asset_filename(path, base=None):
+	cache_dir = os.path.join(CACHE_DIR, 'assets')
+	try:
+		os.makedirs(cache_dir)
+	except FileExistsError:
+		pass
 	if path.startswith('file://'):
 		return to_local_filename(path[len('file://'):], base)
 	elif path.startswith('/'):
 		basename = os.path.basename(path)
-		cache_dir = os.path.join(CACHE_DIR, 'assets')
 		prefix = hashlib.sha1(path[:-len(basename)].encode('utf-8')).hexdigest()
 		basename = prefix + '_' + basename
 		cached_name = os.path.join(cache_dir, basename)
 		if os.path.exists(cached_name):
 			return cached_name
-		try:
-			os.makedirs(cache_dir)
-		except FileExistsError:
-			pass
 		urllib.request.urlretrieve('https://www.shadertoy.com' + path, cached_name)
 		return cached_name
+	elif path.startswith('https://soundcloud.com'):
+		cached_name = os.path.abspath(os.path.join(cache_dir, hashlib.sha1(path.encode('utf-8')).hexdigest() + '.audio'))
+		if os.path.exists(cached_name):
+			return cached_name
+		subprocess.call([YT_DL_BINARY, path, '-o', cached_name])
+		return cached_name
 	else:
+		print(path)
 		raise NotImplementedError()
 
 
@@ -598,6 +606,8 @@ class Input(object):
 			return TextureInput(renderer, input_definition)
 		elif input_definition['type'] == 'music':
 			return MusicInput(renderer, input_definition)
+		elif input_definition['type'] == 'musicstream':
+			return MusicStreamInput(renderer, input_definition)
 		elif input_definition['type'] == 'cubemap':
 			return CubeMapInput(renderer, input_definition)
 		elif input_definition['type'] == 'buffer':
@@ -698,6 +708,10 @@ class MusicInput(TextureInput):
 
 	def _internal_format(self):
 		return gl.GL_R16
+
+
+class MusicStreamInput(MusicInput):
+	pass
 
 
 class CubeMapInput(TextureInput):

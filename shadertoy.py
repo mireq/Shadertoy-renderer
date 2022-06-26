@@ -232,7 +232,7 @@ FFMPEG_BINARY = 'ffmpeg'
 FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -vf vflip -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt yuv420p10le -preset {preset} {extra_args} -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
-FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -loglevel error {output}'
+FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -vn -loglevel error {output}'
 
 FRAME_DURATION_AVERAGE = 60
 

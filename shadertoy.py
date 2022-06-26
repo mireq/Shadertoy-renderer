@@ -83,20 +83,20 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 	vec3 _render_rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
 	_render_rnd = fract(_render_rnd * .1031);
 	_render_rnd += dot(_render_rnd, _render_rnd.yzx + 33.33);
-	float _render_timeOffset = fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x} * {y}) * {shutter_speed};
+	float _render_timeOffset = fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x_f} * {y_f}) * {shutter_speed};
 
 	for (int i = 0; i < {x}; ++i) {{
 		for (int j = 0; j < {y}; ++j) {{
-			_render_aaOffset = vec2(float(i) / {x} - 0.5 + 0.5/{x}, float(j) / {y} - 0.5 + 0.5/{y});
+			_render_aaOffset = vec2(float(i) / {x_f} - 0.5 + 0.5/{x_f}, float(j) / {y_f} - 0.5 + 0.5/{y_f});
 			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
 			mainImage(passColor, gl_FragCoord.xy + iTileOffset + _render_aaOffset);
 			passColor.w = 1.0;
 			color += passColor;
-			iTime = xxiTime + (1.0 / 60.0) * (i * {y} + j) / ({x} * {y}) + _render_timeOffset;
+			iTime = xxiTime + (1.0 / 60.0) * float(i * {y} + j) / float({x} * {y}) + _render_timeOffset;
 		}}
 	}}
 
-	color = color / ({x} * {y});
+	color = color / ({x_f} * {y_f});
 """
 IMAGE_FRAGMENT_SHADER_TEMPLATE = """#version glsl_version
 {inputs}
@@ -164,7 +164,7 @@ void main(void)
 
 IDENTITY_VERTEX_SHADER = """#version glsl_version
 
-attribute vec2 position;
+in vec2 position;
 
 void main()
 {
@@ -174,8 +174,8 @@ void main()
 
 TEXTURE_VERTEX_SHADER = """#version glsl_version
 
-attribute vec2 position;
-varying vec2 texcoord;
+in vec2 position;
+out vec2 texcoord;
 void main()
 {
 	gl_Position = vec4(position, 0.0, 1.0);
@@ -184,22 +184,24 @@ void main()
 
 TEXTURE_FRAGMENT_SHADER = """#version glsl_version
 
-varying vec2 texcoord;
+in vec2 texcoord;
 uniform sampler2D texture;
+out vec4 outColor;
 void main()
 {
-	gl_FragColor = texture2D(texture, texcoord);
+	outColor = texture2D(texture, texcoord);
 }
 """
 VIDEO_FRAGMENT_SHADER = """#version glsl_version
 
-varying vec2 texcoord;
+in vec2 texcoord;
 uniform int average_frames;
 uniform int current_frame;
 uniform int output_frame_number;
 uniform int dithering;
 uniform sampler2D input_buffer;
 uniform sampler2D output_buffer;
+out vec4 outColor;
 
 void main()
 {
@@ -211,7 +213,7 @@ void main()
 		color = texture2D(input_buffer, texcoord) + texture2D(output_buffer, texcoord);
 	}
 	if (average_frames > 1) {
-		color = color / average_frames;
+		color = color / float(average_frames);
 	}
 
 	if (dithering > 0) {
@@ -223,7 +225,7 @@ void main()
 		color = vec4(color.rgb + rnd, color.a);
 	}
 
-	gl_FragColor = color;
+	outColor = color;
 }
 """
 
@@ -929,12 +931,19 @@ class RenderPass(BaseRenderPass):
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 		has_antialias = self.renderer.options.antialias != (1, 1)
 		main = RENDER_MAIN_TEMPLATE
+		def force_float(val):
+			val = str(val)
+			if not '.' in val:
+				val = val + '.'
+			return val
 		if has_antialias:
 			main = RENDER_MAIN_ANTIALIAS_TEMPLATE.format(
 				x=self.renderer.options.antialias[0],
 				y=self.renderer.options.antialias[1],
-				fps=self.renderer.options.fps,
-				shutter_speed=self.renderer.options.shutter_speed,
+				x_f=force_float(self.renderer.options.antialias[0]),
+				y_f=force_float(self.renderer.options.antialias[1]),
+				fps=force_float(self.renderer.options.fps),
+				shutter_speed=force_float(self.renderer.options.shutter_speed),
 			)
 		return dict(
 			inputs=COMMON_INPUTS,
@@ -1470,7 +1479,10 @@ class Renderer(object):
 		gl.glDisableVertexAttribArray(attribute)
 
 	def process_shader(self, shader):
-		return shader.replace('#version glsl_version', '#version ' + self.options.glsl_version)
+		version_str = '#version ' + self.options.glsl_version
+		if ' es' in self.options.glsl_version:
+			version_str += '\nprecision highp float;\nprecision highp int;\nprecision mediump sampler3D;\n'
+		return shader.replace('#version glsl_version', version_str)
 
 	def __calc_tiles(self):
 		tiled_width = (self.options.w + self.options.tile_w - 1) // self.options.tile_w

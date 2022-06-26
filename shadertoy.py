@@ -17,6 +17,7 @@ import queue
 import re
 import shlex
 import statistics
+import struct
 import subprocess
 import sys
 import threading
@@ -614,6 +615,8 @@ class Input(object):
 			return CubeMapInput(renderer, input_definition)
 		elif input_definition['type'] == 'buffer':
 			return BufferInput(renderer, input_definition)
+		elif input_definition['type'] == 'volume':
+			return VolumeInput(renderer, input_definition)
 		elif input_definition['type'] == 'keyboard':
 			return KeyboardInput(renderer, input_definition)
 		else:
@@ -790,6 +793,59 @@ class BufferInput(TextureInput):
 		return Texture(gl.GL_TEXTURE_2D, self.texture)
 
 
+class VolumeInput(TextureInput):
+	def __init__(self, renderer, input_definition):
+		super().__init__(renderer, input_definition)
+		self.depth = 0
+
+	def load_texture(self):
+		if self.texture is None:
+			self.texture = gl.glGenTextures(1)
+			gl.glBindTexture(gl.GL_TEXTURE_3D, self.texture)
+			self._setup_sampler(gl.GL_TEXTURE_3D)
+
+			with open_asset(self.filepath, self.renderer.options.shader_filename) as fp:
+				signature = fp.read(4)
+				self.width, self.height, self.depth = struct.unpack('III', fp.read(12))
+				num_channels, __, bin_fmt = struct.unpack('BBH', fp.read(4))
+				data = fp.read()
+				opengl_type = None
+				OPENGL_FORMATS = {
+					(0, 1): gl.GL_R8,
+					(0, 2): gl.GL_RG8,
+					(0, 3): gl.GL_RGB8,
+					(0, 4): gl.GL_RGBA8,
+					(10, 1): gl.GL_R32F,
+					(10, 2): gl.GL_RG32F,
+					(10, 3): gl.GL_RGB32F,
+					(10, 4): gl.GL_RGBA32F,
+				}
+				PIXEL_FORMATS = {
+					1: gl.GL_RED,
+					2: gl.GL_RG,
+					3: gl.GL_RGB,
+					4: gl.GL_RGBA,
+				}
+				opengl_format = OPENGL_FORMATS[(bin_fmt, num_channels)]
+				pixel_format = PIXEL_FORMATS[num_channels]
+				if bin_fmt == 0: # uint
+					opengl_type = gl.GL_UNSIGNED_BYTE
+				elif bin_fmt == 10: # float
+					opengl_type = gl.GL_FLOAT
+
+				gl.glTexImage3D(gl.GL_TEXTURE_3D, 0, opengl_format, self.width, self.height, self.depth, 0, pixel_format, opengl_type, data)
+				if self.filter == gl.GL_LINEAR_MIPMAP_LINEAR:
+					gl.glGenerateMipmap(gl.GL_TEXTURE_3D)
+
+			gl.glBindTexture(gl.GL_TEXTURE_3D, 0)
+
+	def get_resolution(self):
+		return [self.width, self.height, self.depth]
+
+	def get_texture(self):
+		return Texture(gl.GL_TEXTURE_3D, self.texture)
+
+
 class KeyboardInput(Input):
 	def __init__(self, renderer, input_definition):
 		super().__init__(renderer, input_definition)
@@ -928,6 +984,8 @@ class RenderPass(BaseRenderPass):
 		for i_channel in self.inputs:
 			if isinstance(i_channel, CubeMapInput):
 				i_channels[i_channel.channel] = 'samplerCube'
+			elif isinstance(i_channel, VolumeInput):
+				i_channels[i_channel.channel] = 'sampler3D'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 		has_antialias = self.renderer.options.antialias != (1, 1)
 		main = RENDER_MAIN_TEMPLATE

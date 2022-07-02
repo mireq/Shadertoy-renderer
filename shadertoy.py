@@ -427,6 +427,7 @@ class MediaSource(object):
 		self.current_audio_buffer = None
 		self.current_fft_buffer = b''
 		self.current_fft = None
+		self.__blackman = None
 
 		if self.__stream_info is not None:
 			if media_type == MediaSourceType.image:
@@ -476,7 +477,7 @@ class MediaSource(object):
 			if self.current_audio_buffer is None:
 				self.current_audio_buffer = b'\0' * audio_buffer_bytes
 			if self.current_fft is None:
-				self.current_fft = np.zeros(AUDIO_FRAME_SIZE)
+				self.current_fft = np.array([-100.0] * AUDIO_FRAME_SIZE)
 
 			if additional_size:
 				additional_data = self.__ffmpeg.stdout.read(additional_size)
@@ -488,8 +489,11 @@ class MediaSource(object):
 			while len(self.current_fft_buffer) >= fft_buffer_bytes:
 				fft = self.current_fft_buffer[:fft_buffer_bytes]
 				self.current_fft_buffer = self.current_fft_buffer[audio_buffer_bytes:]
+				if self.__blackman is None:
+					self.__blackman = np.blackman(AUDIO_FFT_SIZE)
 				fft = np.frombuffer(fft, dtype=np.uint16).astype(float)
-				fft = np.fft.rfft(fft)[1:AUDIO_FRAME_SIZE+1] / (AUDIO_FFT_SIZE * 65535)
+				fft = fft * self.__blackman
+				fft = np.fft.rfft(fft)[:AUDIO_FRAME_SIZE] / (AUDIO_FFT_SIZE * 65535 / 2)
 				fft = np.abs(fft)
 				fft[fft == 0] = 0.0000000001
 				fft = 20.*np.log10(np.abs(fft)) # decibels
@@ -497,10 +501,9 @@ class MediaSource(object):
 				self.current_fft = (self.current_fft * AUDIO_FFT_SMOOTHING) + (fft * (1 - AUDIO_FFT_SMOOTHING))
 
 			fft = self.current_fft.copy()
-			db_min, db_max = np.percentile(fft, [0.01, 99.99])
-			if db_min != db_max:
-				fft = (fft - db_min) * (65535.0 / (db_max - db_min))
-			db_min, db_max = np.percentile(fft, [0.0001, 99.9999])
+			db_min = -100
+			db_max = -30
+			fft = (fft - db_min) * (65535.0 / (db_max - db_min))
 			data = np.clip(fft, 0, 65535).astype(np.uint16).tobytes() + self.current_audio_buffer
 		return data
 

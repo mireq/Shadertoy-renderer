@@ -84,16 +84,16 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 	vec3 _render_rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
 	_render_rnd = fract(_render_rnd * .1031);
 	_render_rnd += dot(_render_rnd, _render_rnd.yzx + 33.33);
-	float _render_timeOffset = fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x_f} * {y_f}) * {shutter_speed};
+	float _render_timeOffset = (fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x_f} * {y_f})) * {shutter_speed};
 
 	for (int i = 0; i < {x}; ++i) {{
 		for (int j = 0; j < {y}; ++j) {{
 			_render_aaOffset = vec2(float(i) / {x_f} - 0.5 + 0.5/{x_f}, float(j) / {y_f} - 0.5 + 0.5/{y_f});
+			iTime = xxiTime + ({shutter_speed} / {fps}) * float(i * {y} + j) / float({x} * {y}) + _render_timeOffset;
 			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
 			mainImage(passColor, gl_FragCoord.xy + iTileOffset + _render_aaOffset);
 			passColor.w = 1.0;
 			color += passColor;
-			iTime = xxiTime + (1.0 / 60.0) * float(i * {y} + j) / float({x} * {y}) + _render_timeOffset;
 		}}
 	}}
 

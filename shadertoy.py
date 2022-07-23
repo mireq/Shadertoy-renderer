@@ -1182,7 +1182,7 @@ class VideoRenderPass(BaseRenderPass):
 		self.frame = None
 		self.current_frame_number = 0
 		self.output_frame_number = 1
-		if self.motion_blur or self.motion_blur:
+		if self.motion_blur or self.dithering:
 			self.framebuffer = gl.glGenFramebuffers(1)
 			self.image = gl.glGenTextures(1)
 

@@ -1175,7 +1175,7 @@ class VideoRenderPass(BaseRenderPass):
 
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
 		self.current_frame = array.array('H', [0] * self.renderer.options.w * self.renderer.options.h * 3)
-		self.motion_blur = self.video_framerate_controller.out_fps <= self.video_framerate_controller.fps
+		self.motion_blur = self.video_framerate_controller.out_fps < self.video_framerate_controller.fps
 		self.framebuffer = None
 		self.image = None
 		self.shader = None

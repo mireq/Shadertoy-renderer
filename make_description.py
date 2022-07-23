@@ -39,7 +39,7 @@ def main():
 		fp.write(f'youtube-upload --title "{shader_name} (shadertoy{shader_author})" --tags "shadertoy, shader, opengl, opengl shader{shader_tags}" --description-file description --playlist="Shadertoy" --embeddable=True --privacy unlisted out.mkv\n')
 
 
-	description = f"Source on shadertoy: https://www.shadertoy.com/view/{shader_info['id']}\nRendered using AMD Radeon RX Vega 8\nSpeed (1080p): {{fps}} fps\nPlaylist: https://www.youtube.com/playlist?list=PLCAFZV4XJzP-jGbTke6Bd3PNDpP1AbIKo\nRenderer: https://github.com/mireq/Shadertoy-renderer\n\n{shader_info['description']}\n"
+	description = f"Source on shadertoy: https://www.shadertoy.com/view/{shader_info['id']}\nRendered using AMD Ryzen™ 7 PRO 5850U\nSpeed (1080p): {{fps}} fps\nPlaylist: https://www.youtube.com/playlist?list=PLCAFZV4XJzP-jGbTke6Bd3PNDpP1AbIKo\nRenderer: https://github.com/mireq/Shadertoy-renderer\n\n{shader_info['description']}\n"
 	with open(file_dir / 'description', 'w') as fp:
 		fp.write(description)
 

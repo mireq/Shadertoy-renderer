@@ -86,9 +86,17 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 	_render_rnd += dot(_render_rnd, _render_rnd.yzx + 33.33);
 	float _render_timeOffset = (fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x_f} * {y_f})) * {shutter_speed};
 
+	const float _aaFractX = 1.0 / {x_f};
+	const float _aaFractY = 1.0 / {y_f};
+	const float _aaFractX2 = _aaFractX / {y_f};
+	const float _aaFractY2 = _aaFractY / {x_f};
+
 	for (int i = 0; i < {x}; ++i) {{
 		for (int j = 0; j < {y}; ++j) {{
-			_render_aaOffset = vec2(float(i) / {x_f} - 0.5 + 0.5/{x_f}, float(j) / {y_f} - 0.5 + 0.5/{y_f});
+			_render_aaOffset = vec2(
+				float(i)*_aaFractX + float({y} - j - 1) * _aaFractY2,
+				float(j)*_aaFractY + float(i) * _aaFractX2
+			);
 			iTime = xxiTime + ({shutter_speed} / {fps}) * float(i * {y} + j) / float({x} * {y}) + _render_timeOffset;
 			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
 			mainImage(passColor, gl_FragCoord.xy + iTileOffset + _render_aaOffset);

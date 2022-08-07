@@ -1748,11 +1748,13 @@ def extract_sources(args):
 def download(args):
 	data = {'s': json.dumps({'shaders': [args.url]})}
 	data = urllib.parse.urlencode(data).encode('ascii')
-	req = urllib.request.Request("https://www.shadertoy.com/shadertoy")
+	req = urllib.request.Request("https://www.shadertoy.com/shadertoy", data=data)
 	req.add_header('Referer', 'https://www.shadertoy.com/view/' + args.url)
+	req.add_header('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0')
 	try:
-		with urllib.request.urlopen(req, data) as f:
-			json_data = json.loads(f.read().decode('utf-8'))
+		with urllib.request.urlopen(req) as f:
+			data = f.read().decode('utf-8')
+			json_data = json.loads(data)
 			if not json_data:
 				raise RuntimeError("Shader not found")
 			json.dump(json_data[0], args.file, indent='\t')
@@ -1760,6 +1762,7 @@ def download(args):
 		args.file.close()
 		os.unlink(args.file.name)
 		raise
+
 
 
 def main():

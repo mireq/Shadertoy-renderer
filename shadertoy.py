@@ -1759,17 +1759,15 @@ def download(args):
 	req = urllib.request.Request("https://www.shadertoy.com/shadertoy", data=data)
 	req.add_header('Referer', 'https://www.shadertoy.com/view/' + args.url)
 	req.add_header('User-Agent', 'Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0')
-	try:
-		with urllib.request.urlopen(req) as f:
-			data = f.read().decode('utf-8')
-			json_data = json.loads(data)
-			if not json_data:
-				raise RuntimeError("Shader not found")
-			json.dump(json_data[0], args.file, indent='\t')
-	except Exception:
-		args.file.close()
-		os.unlink(args.file.name)
-		raise
+	with urllib.request.urlopen(req) as f:
+		data = f.read().decode('utf-8')
+		json_data = json.loads(data)
+		if not json_data:
+			raise RuntimeError("Shader not found")
+		dirname = os.path.dirname(args.file)
+		os.makedirs(dirname, exist_ok=True)
+		with open(args.file, 'w') as fp:
+			json.dump(json_data[0], fp, indent='\t')
 
 
 
@@ -1805,7 +1803,7 @@ def main():
 
 	parser_extract_sources = subparsers.add_parser('download', help="Download shader from shadertoy.com")
 	parser_extract_sources.add_argument('url', type=parse_shadertoy_url, help="Shadertoy URL")
-	parser_extract_sources.add_argument('file', type=argparse.FileType('w'), help="Output filename")
+	parser_extract_sources.add_argument('file', type=str, help="Output filename")
 
 	args = parser.parse_args()
 

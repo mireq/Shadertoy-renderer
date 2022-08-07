@@ -241,7 +241,7 @@ void main()
 YT_DL_BINARY = 'yt-dlp'
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt yuv444p16le -preset {preset} {extra_args} -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt {pix_fmt} -preset {preset} {hdr_args} {extra_args} -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -vn -loglevel error {output}'
@@ -1168,7 +1168,13 @@ class VideoRenderPass(BaseRenderPass):
 			'codec': CODECS[self.renderer.options.render_video_codec],
 			'preset': self.renderer.options.render_video_preset,
 			'crf': str(self.renderer.options.render_video_crf),
+			'pix_fmt': str(self.renderer.options.render_video_pix_fmt),
+			'hdr_args': ''
 		}
+		if self.renderer.options.render_video_hdr:
+			replacements['hdr_args']=['-vf', 'colorspace=bt2020:ispace=bt709:itrc=bt709:iprimaries=bt709:trc=bt2020-12:range=pc:format=yuv444p12', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400']
+		else:
+			replacements['hdr_args'] = None
 		if self.renderer.options.render_video_args:
 			replacements['extra_args'] = shlex.split(self.renderer.options.render_video_args)
 		else:
@@ -1351,6 +1357,8 @@ class RendererOptions(object):
 		self.render_video_codec = args.render_video_codec
 		self.render_video_preset = args.render_video_preset
 		self.render_video_crf = args.render_video_crf
+		self.render_video_pix_fmt = args.render_video_pix_fmt
+		self.render_video_hdr = not args.no_render_video_hdr
 		self.render_video_args = args.render_video_args
 		self.benchmark = args.benchmark
 		if (args.render_video or self.benchmark) and self.fps is None:
@@ -1777,9 +1785,11 @@ def main():
 	parser_render.add_argument('--fps', type=int, help="Render frame rate")
 	parser_render.add_argument('--render-video', help="Path to rendered video file")
 	parser_render.add_argument('--render-video-fps', type=int, help="Video frame rate")
-	parser_render.add_argument('--render-video-codec', type=str, choices=['h264', 'h265'], default='h264', help="Video codec")
+	parser_render.add_argument('--render-video-codec', type=str, choices=['h264', 'h265'], default='h265', help="Video codec")
 	parser_render.add_argument('--render-video-preset', type=str, default='medium', help="FFMpeg preset settings")
 	parser_render.add_argument('--render-video-crf', type=int, default=20, help="Constant rate factor, less is better")
+	parser_render.add_argument('--render-video-pix-fmt', type=str, default='yuv444p12le', help="Pix fmt")
+	parser_render.add_argument('--no-render-video-hdr', action='store_true', help="Don't render HDR")
 	parser_render.add_argument('--render-video-args', type=str, help="Extra arguments for ffmpeg")
 	parser_render.add_argument('--benchmark', action='store_true', help="Benchmark")
 	parser_render.add_argument('--quiet', action='store_true', help="Queit")

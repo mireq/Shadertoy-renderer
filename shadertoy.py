@@ -241,7 +241,7 @@ void main()
 YT_DL_BINARY = 'yt-dlp'
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -vf vflip -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt yuv444p16le -preset {preset} {extra_args} -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt yuv444p16le -preset {preset} {extra_args} -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -vn -loglevel error {output}'
@@ -1243,6 +1243,7 @@ class VideoRenderPass(BaseRenderPass):
 			if self.motion_blur or self.dithering:
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, self.current_frame.buffer_info()[0])
+				self.vflip_current_frame()
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
@@ -1250,11 +1251,19 @@ class VideoRenderPass(BaseRenderPass):
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer)
 				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, self.current_frame.buffer_info()[0])
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+				self.vflip_current_frame()
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
 			self.output_frame_number += 1
 		else:
 			self.current_frame_number += 1
+
+	def vflip_current_frame(self):
+		row_width = self.renderer.options.w * 3
+		for row in range(self.renderer.options.h // 2):
+			start = row * row_width
+			end = start + row_width
+			self.current_frame[start:end], self.current_frame[-end:None if start == 0 else -start] = self.current_frame[-end:None if start == 0 else -start], self.current_frame[start:end]
 
 	def destroy(self):
 		if self.ffmpeg is not None:

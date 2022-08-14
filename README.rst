@@ -30,6 +30,7 @@ Video output
 Antialiasing
    Antialiasing with diagonal pattern (example ``2x2``, ``3x3``, ``4x4``,
    ``1x2``, ``2x1``, ``2x3``).
+
    .. image:: https://raw.githubusercontent.com/wiki/mireq/Shadertoy-renderer/aa.png?v2022-08-14
 
 

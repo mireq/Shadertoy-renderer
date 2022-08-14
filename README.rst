@@ -15,6 +15,7 @@ Optional:
 
 - ffmpeg / ffprobe binary (for image and video support)
 - numpy (for audio analzyzer support)
+- yt-dlp (for downloading audio files)
 
 Usage
 -----
@@ -45,3 +46,16 @@ Now directory contains unpacked source files like:
 - image.frag
 - buffer_a.frag
 - buffer_b.frag
+
+Rendering
+^^^^^^^^^
+
+Shader can be rendered using following command:
+
+.. code:: bash
+
+   ./shadertoy.py render <file.json>
+
+Subcommand ``render`` has many optional arguments.
+
+--resolution            Window or video size in format ``width``x``height``

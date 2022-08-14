@@ -1771,7 +1771,8 @@ def download(args):
 		if not json_data:
 			raise RuntimeError("Shader not found")
 		dirname = os.path.dirname(args.file)
-		os.makedirs(dirname, exist_ok=True)
+		if dirname:
+			os.makedirs(dirname, exist_ok=True)
 		with open(args.file, 'w') as fp:
 			json.dump(json_data[0], fp, indent='\t')
 

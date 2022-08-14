@@ -153,7 +153,7 @@ SOUND_FRAGMENT_SHADER_TEMPLATE = """#version glsl_version
 {sampler}
 {definitions}
 
-vec2 mainSound(float time);
+vec2 mainSound(in int samp, float time);
 
 {common}
 {code}
@@ -162,8 +162,9 @@ out vec4 outColor;
 
 void main(void)
 {{
-	float t = iBlockOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*512.0)/iSampleRate;
-	vec2 y = mainSound(t);
+	float t = iTimeOffset + ((gl_FragCoord.x-0.5) + (gl_FragCoord.y-0.5)*512.0)/iSampleRate;
+	int s = iSampleOffset + int(gl_FragCoord.y-0.2)*512 + int(gl_FragCoord.x-0.2);
+	vec2 y = mainSound(s, t);
 	vec2 v = floor((0.5+0.5*y)*65536.0);
 	vec2 vl = mod(v,256.0)/255.0;
 	vec2 vh = floor(v/256.0)/255.0;
@@ -1305,10 +1306,9 @@ class SoundRenderPass(RenderPass):
 
 		gl.glUniform1f(self.shader.get_uniform("iSampleRate"), self.sample_rate)
 
-
 	def get_fragment_shader_replacements(self):
 		replacements = super().get_fragment_shader_replacements()
-		replacements['inputs'] = replacements['inputs'] + "\nuniform float iBlockOffset;"
+		replacements['inputs'] = replacements['inputs'] + "uniform float     iTimeOffset;\nuniform int       iSampleOffset;\n"
 		return replacements
 
 	def render(self):
@@ -1317,7 +1317,8 @@ class SoundRenderPass(RenderPass):
 			self.bind_inputs()
 
 		while not self.buffers.full():
-			gl.glUniform1f(self.shader.get_uniform("iBlockOffset"), self.current_sample / self.sample_rate)
+			gl.glUniform1f(self.shader.get_uniform("iTimeOffset"), self.current_sample / self.sample_rate)
+			gl.glUniform1i(self.shader.get_uniform("iSampleOffset"), self.current_sample)
 			gl.glViewport(0, 0, self.sample_size, self.sample_size)
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 			gl.glActiveTexture(gl.GL_TEXTURE0)
@@ -1496,6 +1497,10 @@ class Renderer(object):
 			for rp_input in rp.inputs:
 				if isinstance(rp_input, KeyboardInput):
 					rp_input.keyboard(key, False)
+
+	def keyboard_special(self, key, x, y):
+		if key == glut.GLUT_KEY_F12:
+			print("Screenshot")
 
 	def mouse(self, button, state, x, y):
 		self.mouse_pressed = state == glut.GLUT_DOWN
@@ -1709,6 +1714,7 @@ def render(args):
 		glut.glutMotionFunc(renderer.mouse_motion)
 		glut.glutKeyboardFunc(renderer.keyboard_down)
 		glut.glutKeyboardUpFunc(renderer.keyboard_up)
+		glut.glutSpecialFunc(renderer.keyboard_special)
 		#glut.glutIdleFunc(renderer.idle)
 
 		while True:
@@ -1768,7 +1774,6 @@ def download(args):
 		os.makedirs(dirname, exist_ok=True)
 		with open(args.file, 'w') as fp:
 			json.dump(json_data[0], fp, indent='\t')
-
 
 
 def main():

@@ -46,22 +46,22 @@ Rendering without GUI
 Supported shadertoy features
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-☑ Image output
-☑ Sound output
-☑ Buffer output
-☑ Commoon shader code
-☑ Keyboard input
-☑ Mouse input
-☑ Soundcloud input
-☑ Music input
-☑ Buffer input
-☑ Cubemap input
-☑ Texture input
-☑ Volume input
-☐ Cubemap output
-☐ Webcam input
-☐ Microphone input
-☐ Video input
+- ☑ Image output
+- ☑ Sound output
+- ☑ Buffer output
+- ☑ Commoon shader code
+- ☑ Keyboard input
+- ☑ Mouse input
+- ☑ Soundcloud input
+- ☑ Music input
+- ☑ Buffer input
+- ☑ Cubemap input
+- ☑ Texture input
+- ☑ Volume input
+- ☐ Cubemap output
+- ☐ Webcam input
+- ☐ Microphone input
+- ☐ Video input
 
 Usage
 -----

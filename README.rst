@@ -6,7 +6,7 @@ This is advanced shadertoy renderer, downloader and extractor.
 
 .. image:: https://raw.githubusercontent.com/wiki/mireq/Shadertoy-renderer/previews.jpg?v2022-08-14
 
-Sample renders are available in `youtube playlist <https://www.youtube.com/playlist?list=PLCAFZV4XJzP-jGbTke6Bd3PNDpP1AbIKo.`
+Sample renders are available in `youtube playlist <https://www.youtube.com/playlist?list=PLCAFZV4XJzP-jGbTke6Bd3PNDpP1AbIKo.`_
 
 Dependencies
 ------------

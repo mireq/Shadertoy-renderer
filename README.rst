@@ -102,4 +102,5 @@ Subcommand ``render`` has many optional arguments.
 --shutter-speed float          Set shutter speed to fraction of frame duration.
                                Default value is 1.0.
 --dithering float              Set dithering intensity
---max-duration HH:MM:SS        Max duration of video
+--max-duration time            Max duration of video in format ``HH:MM:SS``
+

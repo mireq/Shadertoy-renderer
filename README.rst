@@ -25,6 +25,8 @@ Tiled rendering
    This would mean that the computer will be unusable during rendering. Tiled
    rendering can divide work to small tiles and block GPU only for small piece
    of frame.
+Video output
+   Shader can be rendered to video file (with HDR support).
 
 Usage
 -----
@@ -67,5 +69,19 @@ Shader can be rendered using following command:
 
 Subcommand ``render`` has many optional arguments.
 
---resolution            Window or video size in format ``width`` x ``height``
---tile-size             Tile size in format ``width`` x ``height``
+--resolution                   Window or video size in format ``width`` x ``height``
+--tile-size                    Tile size in format ``width`` x ``height``
+--fps num                      Target frames per second (valid for video)
+--render-video file            Path to video file
+--render-video-fps num         If this frame rate is lower than ``fps``, then
+                               multiple frames are used to render motion blur.
+--render-video-codec codec     Valid values are  ``h264`` or ``h265``
+--render-video-preset preset   Attribute ``preset`` passed to ffmpeg.
+--render-video-crf num         Attribute ``crf`` passed to ffmpeg (lower value
+                               = better quality)
+--render-video-pix-fmt fmt     Attribute ``pix_fmt`` passed to ffmpeg. Default
+                               value is yuv444p12le (12 bit without chroma
+                               subsampling)
+--no-render-video-hdr          Don't render to HDR (video is rendered as HDR
+                               without this option)
+--render-video-args args       Additional arguments passed to ffmpeg

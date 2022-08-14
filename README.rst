@@ -27,6 +27,11 @@ Tiled rendering
    of frame.
 Video output
    Shader can be rendered to video file (with HDR support).
+Antialiasing
+   Antialiasing with diagonal pattern (example ``2x2``, ``3x3``, ``4x4``,
+   ``1x2``, ``2x1``, ``2x3``).
+   .. image:: https://raw.githubusercontent.com/wiki/mireq/Shadertoy-renderer/aa.png?v2022-08-14
+
 
 Usage
 -----
@@ -85,3 +90,11 @@ Subcommand ``render`` has many optional arguments.
 --no-render-video-hdr          Don't render to HDR (video is rendered as HDR
                                without this option)
 --render-video-args args       Additional arguments passed to ffmpeg
+--benchmark                    Run without flush commands
+--quiet                        Don't show statistics
+--no-window                    Run without window
+--antialias                    Antialiasing with pattern defined as
+                               ``x samples`` x ``y samples``
+                               This option automatically enables motion blur. To
+                               disable motion blur set ``--shutter-speed`` to
+                               ``0``

@@ -6,7 +6,7 @@ This is advanced shadertoy renderer, downloader and extractor.
 
 .. image:: https://raw.githubusercontent.com/wiki/mireq/Shadertoy-renderer/previews.jpg?v2022-08-14
 
-Sample renders are available in `youtube playlist <https://www.youtube.com/playlist?list=PLCAFZV4XJzP-jGbTke6Bd3PNDpP1AbIKo>`_
+Sample renders are available in `youtube playlist <https://www.youtube.com/playlist?list=PLCAFZV4XJzP-jGbTke6Bd3PNDpP1AbIKo>`_.
 
 Dependencies
 ------------
@@ -36,6 +36,12 @@ Antialiasing
    ``1x2``, ``2x1``, ``2x3``).
 
    .. image:: https://raw.githubusercontent.com/wiki/mireq/Shadertoy-renderer/aa.png?v2022-08-14
+Motion blur
+   With enabled antialiasing, pixel samples are redered with slightly shifted
+   time, which enables motion blur.
+Rendering without GUI
+   Running with environment variable ``EGL_PLATFORM=drm`` and option
+   ``--no-window`` allows rendering without GUI.
 
 
 Usage

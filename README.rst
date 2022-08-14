@@ -75,8 +75,8 @@ Shader can be rendered using following command:
 
 Subcommand ``render`` has many optional arguments.
 
---resolution                   Window or video size in format ``width`` x ``height``
---tile-size                    Tile size in format ``width`` x ``height``
+--resolution XxY               Window or video size in format ``width`` x ``height``
+--tile-size XxY                Tile size in format ``width`` x ``height``
 --fps num                      Target frames per second (valid for video)
 --render-video file            Path to video file
 --render-video-fps num         If this frame rate is lower than ``fps``, then
@@ -94,8 +94,12 @@ Subcommand ``render`` has many optional arguments.
 --benchmark                    Run without flush commands
 --quiet                        Don't show statistics
 --no-window                    Run without window
---antialias                    Antialiasing with pattern defined as
+--antialias XxY                Antialiasing with pattern defined as
                                ``x samples`` x ``y samples``
                                This option automatically enables motion blur. To
                                disable motion blur set ``--shutter-speed`` to
                                ``0``
+--shutter-speed float          Set shutter speed to fraction of frame duration.
+                               Default value is 1.0.
+--dithering float              Set dithering intensity
+--max-duration HH:MM:SS        Max duration of video

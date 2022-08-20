@@ -242,7 +242,7 @@ void main()
 YT_DL_BINARY = 'yt-dlp'
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt rgb48le -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt {pix_fmt} -preset {preset} {hdr_args} {extra_args} -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt gbrpf32le -color_range pc -color_trc linear -color_primaries bt709 -colorspace bt709 -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt {pix_fmt} -preset {preset} {hdr_args} {extra_args} -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -vn -loglevel error {output}'
@@ -1131,7 +1131,7 @@ class ImageRenderPass(RenderPass):
 
 
 class VideoRenderPass(BaseRenderPass):
-	_framebuffer_internal_format = gl.GL_RGBA16
+	_framebuffer_internal_format = gl.GL_RGBA32F
 
 	def __init__(self, renderer):
 		super().__init__(renderer)
@@ -1173,7 +1173,11 @@ class VideoRenderPass(BaseRenderPass):
 			'hdr_args': ''
 		}
 		if self.renderer.options.render_video_hdr:
-			replacements['hdr_args']=['-vf', 'colorspace=bt2020:ispace=bt709:itrc=bt709:iprimaries=bt709:trc=bt2020-12:range=pc:format=yuv444p12', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400']
+			#replacements['hdr_args']=['-vf', 'colorspace=bt2020:ispace=bt709:itrc=linear:iprimaries=bt709:trc=bt2020-12:range=pc:format=yuv444p12', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400']
+			#replacements['hdr_args']=['-vf', 'zscale=rin=full:pin=709:tin=linear:min=709:r=full:p=2020:t=linear,format=yuv444p12le', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:max-cll=203,203']
+			#replacements['hdr_args']=['-vf', 'zscale=rin=full:pin=709:tin=linear:min=709:r=full:npl=100:p=2020:t=arib-std-b67:m=2020_ncl,format=yuv444p12le', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:max-cll=100,100']
+			#replacements['hdr_args']=['-vf', 'zscale=tin=linear:t=arib-std-b67', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt709', '-colorspace', 'bt709']
+			replacements['hdr_args']=['-vf', 'zscale=tin=709:pin=bt2020:min=2020_cl:t=arib-std-b67:npl=203:m=bt2020nc,format=yuv420p12le', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt709', '-colorspace', 'bt709', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,203']
 		else:
 			replacements['hdr_args'] = None
 		if self.renderer.options.render_video_args:
@@ -1189,7 +1193,8 @@ class VideoRenderPass(BaseRenderPass):
 		}
 
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
-		self.current_frame = array.array('H', [0] * self.renderer.options.w * self.renderer.options.h * 3)
+		self.current_frame = array.array('f', [0] * self.renderer.options.w * self.renderer.options.h * 3)
+		self.planar_frame = array.array('f', [0] * self.renderer.options.w * self.renderer.options.h * 3)
 		self.motion_blur = self.video_framerate_controller.out_fps < self.video_framerate_controller.fps
 		self.framebuffer = None
 		self.image = None
@@ -1249,18 +1254,22 @@ class VideoRenderPass(BaseRenderPass):
 			self.current_frame_number = 0
 			if self.motion_blur or self.dithering:
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
-				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, self.current_frame.buffer_info()[0])
+				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT, self.current_frame.buffer_info()[0])
 				self.vflip_current_frame()
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 			else:
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer)
-				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, self.current_frame.buffer_info()[0])
+				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT, self.current_frame.buffer_info()[0])
 				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 				self.vflip_current_frame()
+				plane_size=len(self.planar_frame)//3
+				self.planar_frame[plane_size*0:plane_size*1] = self.current_frame[1::3]
+				self.planar_frame[plane_size*1:plane_size*2] = self.current_frame[0::3]
+				self.planar_frame[plane_size*2:plane_size*3] = self.current_frame[2::3]
 				for __ in range(frame_action.emit_frames):
-					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
+					self.ffmpeg_inputs['video'][0].write(self.planar_frame.tobytes())
 			self.output_frame_number += 1
 		else:
 			self.current_frame_number += 1

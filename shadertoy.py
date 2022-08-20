@@ -69,6 +69,7 @@ SIMPLE_INPUTS = """
 #define iTime xxiTime
 """
 ANTIALIAS_INPUTS = """
+uniform sampler2D xxAccumulator;
 float iTime = 0.0;
 """
 
@@ -78,34 +79,38 @@ RENDER_MAIN_TEMPLATE = """
 	mainImage(color, gl_FragCoord.xy + iTileOffset);
 """
 RENDER_MAIN_ANTIALIAS_TEMPLATE = """
+//	iTime = xxiTime;
+//	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
+//	vec2 _render_aaOffset;
+//	vec3 _render_rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
+//	_render_rnd = fract(_render_rnd * .1031);
+//	_render_rnd += dot(_render_rnd, _render_rnd.yzx + 33.33);
+//	float _render_timeOffset = (fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x_f} * {y_f})) * {shutter_speed};
+//
+//	const float _aaFractX = 1.0 / {x_f};
+//	const float _aaFractY = 1.0 / {y_f};
+//	const float _aaFractX2 = _aaFractX / {y_f};
+//	const float _aaFractY2 = _aaFractY / {x_f};
+//
+//	for (int i = 0; i < {x}; ++i) {{
+//		for (int j = 0; j < {y}; ++j) {{
+//			_render_aaOffset = vec2(
+//				float(i)*_aaFractX + float({y} - j - 1) * _aaFractY2,
+//				float(j)*_aaFractY + float(i) * _aaFractX2
+//			);
+//			iTime = xxiTime + ({shutter_speed} / {fps}) * float(i * {y} + j) / float({x} * {y}) + _render_timeOffset;
+//			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
+//			mainImage(passColor, gl_FragCoord.xy + iTileOffset + _render_aaOffset);
+//			passColor.w = 1.0;
+//			color += passColor;
+//		}}
+//	}}
+//
+//	color = color / ({x_f} * {y_f});
 	iTime = xxiTime;
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
-	vec2 _render_aaOffset;
-	vec3 _render_rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
-	_render_rnd = fract(_render_rnd * .1031);
-	_render_rnd += dot(_render_rnd, _render_rnd.yzx + 33.33);
-	float _render_timeOffset = (fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x_f} * {y_f})) * {shutter_speed};
-
-	const float _aaFractX = 1.0 / {x_f};
-	const float _aaFractY = 1.0 / {y_f};
-	const float _aaFractX2 = _aaFractX / {y_f};
-	const float _aaFractY2 = _aaFractY / {x_f};
-
-	for (int i = 0; i < {x}; ++i) {{
-		for (int j = 0; j < {y}; ++j) {{
-			_render_aaOffset = vec2(
-				float(i)*_aaFractX + float({y} - j - 1) * _aaFractY2,
-				float(j)*_aaFractY + float(i) * _aaFractX2
-			);
-			iTime = xxiTime + ({shutter_speed} / {fps}) * float(i * {y} + j) / float({x} * {y}) + _render_timeOffset;
-			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
-			mainImage(passColor, gl_FragCoord.xy + iTileOffset + _render_aaOffset);
-			passColor.w = 1.0;
-			color += passColor;
-		}}
-	}}
-
-	color = color / ({x_f} * {y_f});
+	mainImage(color, gl_FragCoord.xy + iTileOffset);
+	color = texelFetch(xxAccumulator, ivec2(gl_FragCoord.xy), 0) + color / ({x_f} * {y_f});
 """
 IMAGE_FRAGMENT_SHADER_TEMPLATE = """#version glsl_version
 {inputs}
@@ -999,14 +1004,13 @@ class RenderPass(BaseRenderPass):
 			elif isinstance(i_channel, VolumeInput):
 				i_channels[i_channel.channel] = 'sampler3D'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
-		has_antialias = self.renderer.options.antialias != (1, 1)
 		main = RENDER_MAIN_TEMPLATE
 		def force_float(val):
 			val = str(val)
 			if not '.' in val:
 				val = val + '.'
 			return val
-		if has_antialias:
+		if self.renderer.options.has_antialias:
 			main = RENDER_MAIN_ANTIALIAS_TEMPLATE.format(
 				x=self.renderer.options.antialias[0],
 				y=self.renderer.options.antialias[1],
@@ -1019,7 +1023,7 @@ class RenderPass(BaseRenderPass):
 			inputs=COMMON_INPUTS,
 			definitions=COMMON_DEFINITIONS,
 			render_main=main,
-			redefinitions=ANTIALIAS_INPUTS if has_antialias else SIMPLE_INPUTS,
+			redefinitions=ANTIALIAS_INPUTS if self.renderer.options.has_antialias else SIMPLE_INPUTS,
 			sampler=sampler_code,
 			common=self.renderer.common,
 			code=self.code
@@ -1078,7 +1082,7 @@ class RenderPass(BaseRenderPass):
 			texture = input_channel.get_texture()
 			if texture is not None:
 				channel = input_channel.channel
-				gl.glActiveTexture(gl.GL_TEXTURE0 + channel + 1)
+				gl.glActiveTexture(gl.GL_TEXTURE0 + channel + 2)
 				gl.glBindTexture(*texture)
 				gl.glUniform1i(self.shader.get_uniform(f"iChannel{input_channel.channel}"), channel + 1)
 				gl.glActiveTexture(gl.GL_TEXTURE0)
@@ -1101,17 +1105,34 @@ class ImageRenderPass(RenderPass):
 		self.shader.use()
 		self.bind_inputs()
 
-		tiling = len(self.renderer.tiles) > 1
+		blitter = Blitter(self.tile_framebuffer)
+		blitter.set_target_texture(self.tile_image)
+
+		rect = [0, 0, self.renderer.options.tile_w, self.renderer.options.tile_h]
+		tiling = len(self.renderer.tiles) > 1 or True
 		for tile in self.renderer.tiles:
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer)
+			gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+			blitter.blit(rect, rect)
+
 			gl.glUniform2f(self.shader.get_uniform("iTileOffset"), float(tile[0]), float(tile[1]))
 
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer)
-			gl.glActiveTexture(gl.GL_TEXTURE0)
-			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
-			self.renderer.enable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
-			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-			self.renderer.disable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+			for i in range(4):
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.tile_framebuffer if tiling else self.framebuffer)
+
+				gl.glActiveTexture(gl.GL_TEXTURE1)
+				gl.glBindTexture(gl.GL_TEXTURE_2D, self.tile_image)
+				gl.glUniform1i(self.shader.get_uniform(f"xxAccumulator"), 1)
+
+				gl.glActiveTexture(gl.GL_TEXTURE0)
+				gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
+				self.renderer.enable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
+				gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+				self.renderer.disable_surface_vertex_attrib_array(self.shader.get_attribute('position'))
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+
+				blitter.blit(rect, rect)
 
 			if tiling:
 				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, self.tile_framebuffer)
@@ -1369,6 +1390,7 @@ class RendererOptions(object):
 		self.quiet = args.quiet
 		self.no_window = args.no_window
 		self.antialias = args.antialias
+		self.has_antialias = args.antialias != (1, 1)
 		self.shutter_speed = args.shutter_speed
 		self.dithering = args.dithering
 		self.glsl_version = args.glsl_version
@@ -1694,7 +1716,7 @@ def render(args):
 				renderer.quit()
 				sys.exit()
 	else:
-		os.environ['vblank_mode'] = '0'
+		#os.environ['vblank_mode'] = '0'
 
 		glut.glutInit()
 		glut.glutInitContextVersion(3, 3)

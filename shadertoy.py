@@ -243,7 +243,6 @@ PLANAR_CONVERSION_FRAGMENT_SHADER = """#version glsl_version
 in vec2 texcoord;
 out vec4 outColor;
 uniform sampler2D input_buffer;
-const ivec2 iResolution = ivec2(__w__, __h__);
 const int frame_size = __w__ * __h__;
 const int frame_size_components = __w__ * __h__ * 4;
 

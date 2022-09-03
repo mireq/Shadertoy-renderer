@@ -5,6 +5,7 @@ import array
 import collections
 import contextlib
 import ctypes
+import datetime
 import enum
 import fractions
 import hashlib
@@ -1043,6 +1044,8 @@ class RenderPass(BaseRenderPass):
 				gl.glUniform3fv(self.shader.get_uniform("iChannelResolution"), NR_CHANNELS, val)
 			elif key == 'mouse':
 				gl.glUniform4f(self.shader.get_uniform("iMouse"), *val)
+			elif key == 'date':
+				gl.glUniform4f(self.shader.get_uniform("iDate"), *val)
 			else:
 				raise RuntimeError("Unknown input: %s" % key)
 
@@ -1417,6 +1420,7 @@ class Renderer(object):
 		self.sound = None
 		self.common = ''
 		self.start_time = time.monotonic()
+		self.real_start_time = datetime.datetime.now()
 		self.current_time = self.start_time
 		self.last_time = self.start_time
 		self.exact_time = fractions.Fraction(0)
@@ -1536,6 +1540,13 @@ class Renderer(object):
 			self.exact_time = fractions.Fraction(self.current_time - self.start_time)
 		uniforms['frame'] = self.frame
 		uniforms['mouse'] = self.mouse_state
+		real_date = self.real_start_time + datetime.timedelta(seconds=float(self.exact_time))
+		uniforms['date'] = [
+			float(real_date.year),
+			float(real_date.month - 1),
+			float(real_date.day),
+			float(real_date.hour * 60 * 60 + real_date.minute * 60 + real_date.second) + float(real_date.microsecond) / 1000000,
+		]
 
 		for render_pass in self.render_passes:
 			uniforms['channel_time'] = [channel.get_channel_time() for channel in render_pass.inputs]

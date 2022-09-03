@@ -1269,8 +1269,8 @@ class VideoRenderPass(BaseRenderPass):
 				self.vflip_current_frame()
 				plane_size=len(self.planar_frame)//3
 				self.planar_frame[plane_size*0:plane_size*1] = self.current_frame[1::3]
-				self.planar_frame[plane_size*1:plane_size*2] = self.current_frame[0::3]
-				self.planar_frame[plane_size*2:plane_size*3] = self.current_frame[2::3]
+				self.planar_frame[plane_size*1:plane_size*2] = self.current_frame[2::3]
+				self.planar_frame[plane_size*2:plane_size*3] = self.current_frame[0::3]
 				for __ in range(frame_action.emit_frames):
 					self.ffmpeg_inputs['video'][0].write(self.planar_frame.tobytes())
 			self.output_frame_number += 1

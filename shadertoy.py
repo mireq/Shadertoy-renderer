@@ -239,6 +239,42 @@ void main()
 	outColor = color;
 }
 """
+PLANAR_CONVERSION_FRAGMENT_SHADER = """#version glsl_version
+in vec2 texcoord;
+out vec4 outColor;
+uniform sampler2D input_buffer;
+const ivec2 iResolution = ivec2(__w__, __h__);
+const int frame_size = __w__ * __h__;
+const int frame_size_components = __w__ * __h__ * 4;
+
+#define get_texel(x, y) texelFetch(input_buffer, ivec2(int(x), __h__ - int(y)), 0)
+
+float get_addr(in int addr)
+{
+	int pix = addr / 4;
+	int component = ((addr % 4) + 1) % 3;
+	return get_texel(pix % __w__, pix / __w__)[component];
+}
+
+int from_packed(in int x, in int y, in int component)
+{
+	int o_address = (x + y * __w__) * 3 + component;
+	int i_address = (o_address * 4) % frame_size_components + (o_address * 4) / frame_size_components;
+	return i_address;
+}
+
+void main()
+{
+	int x = int(gl_FragCoord.x);
+	int y = int(gl_FragCoord.y);
+	outColor = vec4(
+		get_addr(from_packed(x, y, 0)),
+		get_addr(from_packed(x, y, 1)),
+		get_addr(from_packed(x, y, 2)),
+		get_addr(from_packed(x, y, 3))
+	);
+}
+"""
 
 YT_DL_BINARY = 'yt-dlp'
 FFPROBE_BINARY = 'ffprobe'
@@ -1204,6 +1240,11 @@ class VideoRenderPass(BaseRenderPass):
 		self.image = None
 		self.shader = None
 		self.frame = None
+
+		self.conversion_framebuffer = None
+		self.conversion_image = None
+		self.conversion_shader = None
+
 		self.current_frame_number = 0
 		self.output_frame_number = 1
 		if self.motion_blur or self.dithering:
@@ -1223,8 +1264,24 @@ class VideoRenderPass(BaseRenderPass):
 				self.renderer.process_shader(TEXTURE_VERTEX_SHADER),
 				self.renderer.process_shader(VIDEO_FRAGMENT_SHADER)
 			)
-			self.shader.use()
 			gl.glUniform1i(self.shader.get_uniform("dithering"), self.dithering)
+
+		self.conversion_framebuffer = gl.glGenFramebuffers(1)
+		self.conversion_image = gl.glGenTextures(1)
+
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.conversion_framebuffer)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, self.conversion_image)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB32F, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, None)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.conversion_image, 0)
+		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+		self.conversion_shader = Shader(
+			self.renderer.process_shader(TEXTURE_VERTEX_SHADER),
+			self.renderer.process_shader(PLANAR_CONVERSION_FRAGMENT_SHADER.replace('__w__', str(self.renderer.options.w)).replace('__h__', str(self.renderer.options.h)))
+		)
 
 	def render(self):
 		frame_action = self.video_framerate_controller.on_frame()
@@ -1257,26 +1314,29 @@ class VideoRenderPass(BaseRenderPass):
 		if frame_action.emit_frames:
 			self.current_frame_number = 0
 			framebuffer = self.framebuffer if self.motion_blur or self.dithering else self.renderer.output.framebuffer
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer)
+			image = self.image if self.motion_blur or self.dithering else self.renderer.output.image
+
+			self.conversion_shader.use()
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.conversion_framebuffer)
+			gl.glActiveTexture(gl.GL_TEXTURE0)
+			gl.glBindTexture(gl.GL_TEXTURE_2D, image)
+			gl.glUniform1i(self.conversion_shader.get_uniform("input_buffer"), 0)
+			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
+			self.renderer.enable_surface_vertex_attrib_array(self.conversion_shader.get_attribute('position'))
+			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+			self.renderer.disable_surface_vertex_attrib_array(self.conversion_shader.get_attribute('position'))
+			gl.glFinish()
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.conversion_framebuffer)
 			gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT, self.current_frame.buffer_info()[0])
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
-			self.vflip_current_frame()
-			plane_size=len(self.planar_frame)//3
-			self.planar_frame[plane_size*0:plane_size*1] = self.current_frame[1::3]
-			self.planar_frame[plane_size*1:plane_size*2] = self.current_frame[2::3]
-			self.planar_frame[plane_size*2:plane_size*3] = self.current_frame[0::3]
+
 			for __ in range(frame_action.emit_frames):
-				self.ffmpeg_inputs['video'][0].write(self.planar_frame.tobytes())
+				self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
 			self.output_frame_number += 1
 		else:
 			self.current_frame_number += 1
-
-	def vflip_current_frame(self):
-		row_width = self.renderer.options.w * 3
-		for row in range(self.renderer.options.h // 2):
-			start = row * row_width
-			end = start + row_width
-			self.current_frame[start:end], self.current_frame[-end:None if start == 0 else -start] = self.current_frame[-end:None if start == 0 else -start], self.current_frame[start:end]
 
 	def destroy(self):
 		if self.ffmpeg is not None:

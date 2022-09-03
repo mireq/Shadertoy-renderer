@@ -278,7 +278,7 @@ void main()
 YT_DL_BINARY = 'yt-dlp'
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt gbrpf32le -color_range pc -color_trc linear -color_primaries bt709 -colorspace bt709 -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt {pix_fmt} -preset {preset} {hdr_args} {extra_args} -loglevel error {output}'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt gbrpf32le -color_range pc -color_trc linear -color_primaries bt2020 -colorspace bt2020nc -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt {pix_fmt} -preset {preset} {hdr_args} {extra_args} -loglevel error {output}'
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -vn -loglevel error {output}'
@@ -1216,7 +1216,7 @@ class VideoRenderPass(BaseRenderPass):
 			#replacements['hdr_args']=['-vf', 'zscale=rin=full:pin=709:tin=linear:min=709:r=full:npl=100:p=2020:t=arib-std-b67:m=2020_ncl,format=yuv444p12le', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:max-cll=100,100']
 			#replacements['hdr_args']=['-vf', 'zscale=tin=linear:t=arib-std-b67', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt709', '-colorspace', 'bt709']
 			#replacements['hdr_args']=['-vf', 'zscale=tin=linear:pin=709:min=709:t=arib-std-b67:npl=203:m=bt2020nc,format=yuv444p12le', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt709', '-colorspace', 'bt709', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,203']
-			replacements['hdr_args']=['-vf', 'colorspace=bt2020:ispace=bt709:itrc=bt709:iprimaries=bt2020:trc=bt2020-12:irange=pc:range=pc:format=yuv444p12', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=400']
+			replacements['hdr_args'] = ['-vf', 'colorspace=bt2020:ispace=bt2020nc:itrc=bt709:iprimaries=bt2020:trc=bt2020-12:irange=pc:range=pc:format=yuv444p12', '-color_range', 'pc', '-color_trc', 'arib-std-b67', '-color_primaries', 'bt2020', '-colorspace', 'bt2020nc', '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=full:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000']
 		else:
 			replacements['hdr_args'] = None
 		if self.renderer.options.render_video_args:

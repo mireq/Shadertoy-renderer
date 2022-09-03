@@ -1256,24 +1256,17 @@ class VideoRenderPass(BaseRenderPass):
 
 		if frame_action.emit_frames:
 			self.current_frame_number = 0
-			if self.motion_blur or self.dithering:
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
-				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT, self.current_frame.buffer_info()[0])
-				self.vflip_current_frame()
-				for __ in range(frame_action.emit_frames):
-					self.ffmpeg_inputs['video'][0].write(self.current_frame.tobytes())
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
-			else:
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.renderer.output.framebuffer)
-				gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT, self.current_frame.buffer_info()[0])
-				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
-				self.vflip_current_frame()
-				plane_size=len(self.planar_frame)//3
-				self.planar_frame[plane_size*0:plane_size*1] = self.current_frame[1::3]
-				self.planar_frame[plane_size*1:plane_size*2] = self.current_frame[2::3]
-				self.planar_frame[plane_size*2:plane_size*3] = self.current_frame[0::3]
-				for __ in range(frame_action.emit_frames):
-					self.ffmpeg_inputs['video'][0].write(self.planar_frame.tobytes())
+			framebuffer = self.framebuffer if self.motion_blur or self.dithering else self.renderer.output.framebuffer
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, framebuffer)
+			gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT, self.current_frame.buffer_info()[0])
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+			self.vflip_current_frame()
+			plane_size=len(self.planar_frame)//3
+			self.planar_frame[plane_size*0:plane_size*1] = self.current_frame[1::3]
+			self.planar_frame[plane_size*1:plane_size*2] = self.current_frame[2::3]
+			self.planar_frame[plane_size*2:plane_size*3] = self.current_frame[0::3]
+			for __ in range(frame_action.emit_frames):
+				self.ffmpeg_inputs['video'][0].write(self.planar_frame.tobytes())
 			self.output_frame_number += 1
 		else:
 			self.current_frame_number += 1

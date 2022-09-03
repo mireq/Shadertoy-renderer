@@ -1089,7 +1089,7 @@ class RenderPass(BaseRenderPass):
 
 
 class ImageRenderPass(RenderPass):
-	_framebuffer_internal_format = gl.GL_RGBA16
+	_framebuffer_internal_format = gl.GL_RGBA32F
 	_fragment_shader_template = IMAGE_FRAGMENT_SHADER_TEMPLATE
 
 	def __init__(self, *args, **kwargs):

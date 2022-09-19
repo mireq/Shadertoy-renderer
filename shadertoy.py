@@ -246,7 +246,7 @@ uniform sampler2D input_buffer;
 const int frame_size = __w__ * __h__;
 const int frame_size_components = __w__ * __h__ * 4;
 
-#define get_texel(x, y) texelFetch(input_buffer, ivec2(int(x), __h__ - int(y)), 0)
+#define get_texel(x, y) texelFetch(input_buffer, ivec2(int(x), __h__ - int(y) - 1), 0)
 
 float get_addr(in int addr)
 {

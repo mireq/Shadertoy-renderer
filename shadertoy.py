@@ -247,11 +247,13 @@ const int frame_size = __w__ * __h__;
 const int frame_size_components = __w__ * __h__ * 4;
 
 #define get_texel(x, y) texelFetch(input_buffer, ivec2(int(x), __h__ - int(y) - 1), 0)
+//#define lin_to_srgb(val) (val <= .0031308 ? (val) * 12.92 : 1.055 * pow(val, 1.0/2.4) - 0.055)
 
 float get_addr(in int addr)
 {
 	int pix = addr / 4;
 	int component = ((addr % 4) + 1) % 3;
+	//return lin_to_srgb(get_texel(pix % __w__, pix / __w__)[component]);
 	return get_texel(pix % __w__, pix / __w__)[component];
 }
 

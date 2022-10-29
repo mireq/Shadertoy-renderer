@@ -42,6 +42,8 @@ except NotImplementedError:
 
 logger = logging.getLogger(__name__)
 
+#RENDER_FORMAT = gl.GL_RGBA32F
+RENDER_FORMAT = gl.GL_RGBA16
 NR_CHANNELS = 4
 AUDIO_FRAME_SIZE = 512
 AUDIO_FFT_SIZE = 2048
@@ -76,13 +78,13 @@ float iTime = 0.0;
 
 RENDER_MAIN_TEMPLATE = """
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
-	mainImage(color, gl_FragCoord.xy + iTileOffset);
+	mainImage(color, {gl_position});
 """
 RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 	iTime = xxiTime;
 	vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
 	vec2 _render_aaOffset;
-	vec3 _render_rnd = vec3(gl_FragCoord.xy + iTileOffset, iFrame);
+	vec3 _render_rnd = vec3({gl_position}, iFrame);
 	_render_rnd = fract(_render_rnd * .1031);
 	_render_rnd += dot(_render_rnd, _render_rnd.yzx + 33.33);
 	float _render_timeOffset = (fract((_render_rnd.x + _render_rnd.y) * _render_rnd.z) / {fps} / ({x_f} * {y_f})) * {shutter_speed};
@@ -100,7 +102,7 @@ RENDER_MAIN_ANTIALIAS_TEMPLATE = """
 			);
 			iTime = xxiTime + ({shutter_speed} / {fps}) * float(i * {y} + j) / float({x} * {y}) + _render_timeOffset;
 			vec4 passColor = vec4(0.0, 0.0, 0.0, 1.0);
-			mainImage(passColor, gl_FragCoord.xy + iTileOffset + _render_aaOffset);
+			mainImage(passColor, {gl_position} + _render_aaOffset);
 			passColor.w = 1.0;
 			color += passColor;
 		}}
@@ -192,6 +194,15 @@ void main()
 	gl_Position = vec4(position, 0.0, 1.0);
 	texcoord = position * vec2(0.5, 0.5) + vec2(0.5);
 }"""
+VFLIP_TEXTURE_VERTEX_SHADER = """#version glsl_version
+
+in vec2 position;
+out vec2 texcoord;
+void main()
+{
+	gl_Position = vec4(position, 0.0, 1.0);
+	texcoord = position * vec2(0.5, -0.5) + vec2(0.5);
+}"""
 
 TEXTURE_FRAGMENT_SHADER = """#version glsl_version
 
@@ -246,7 +257,7 @@ uniform sampler2D input_buffer;
 const int frame_size = __w__ * __h__;
 const int frame_size_components = __w__ * __h__ * 4;
 
-#define get_texel(x, y) texelFetch(input_buffer, ivec2(int(x), __h__ - int(y) - 1), 0)
+#define get_texel(x, y) texelFetch(input_buffer, ivec2(int(x), int(y)), 0)
 //#define lin_to_srgb(val) (val <= .0031308 ? (val) * 12.92 : 1.055 * pow(val, 1.0/2.4) - 0.055)
 
 float get_addr(in int addr)
@@ -280,7 +291,8 @@ void main()
 YT_DL_BINARY = 'yt-dlp'
 FFPROBE_BINARY = 'ffprobe'
 FFMPEG_BINARY = 'ffmpeg'
-FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt gbrpf32le -color_range pc -color_trc linear -color_primaries bt2020 -colorspace bt2020nc -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt {pix_fmt} -preset {preset} {hdr_args} {extra_args} -loglevel error {output}'
+PIX_FMT = 'gbrpf32le' if RENDER_FORMAT == gl.GL_RGBA32F else 'rgb48le'
+FFMPEG_CMDLINE = '{ffmpeg} -r {framerate} -f rawvideo -s {resolution} -pix_fmt %s -color_range pc -color_trc linear -color_primaries bt2020 -colorspace bt2020nc -i {input} {more_inputs} -y -crf {crf} -c:v {codec} -c:a flac -pix_fmt {pix_fmt} -preset {preset} {hdr_args} {extra_args} -loglevel error {output}' % PIX_FMT
 FFPROBE_CMDLINE = '{ffprobe} {input} -print_format json -show_format -show_streams -loglevel error'
 FFMPEG_VIDEO_SOURCE = '{ffmpeg} -i {input} {filters} -f rawvideo -pix_fmt rgba -loglevel error {output}'
 FFMPEG_AUDIO_SOURCE = '{ffmpeg} -i {input} -ac 1 -f u16le -vn -loglevel error {output}'
@@ -959,6 +971,7 @@ class BaseRenderPass(object):
 
 class RenderPass(BaseRenderPass):
 	_fragment_shader_template = None
+	vflip = False
 
 	def __init__(self, renderer, pass_definition):
 		super().__init__(renderer)
@@ -1038,12 +1051,15 @@ class RenderPass(BaseRenderPass):
 				i_channels[i_channel.channel] = 'sampler3D'
 		sampler_code = ''.join(f'uniform {sampler} iChannel{num};\n' for num, sampler in enumerate(i_channels))
 		has_antialias = self.renderer.options.antialias != (1, 1)
-		main = RENDER_MAIN_TEMPLATE
 		def force_float(val):
 			val = str(val)
 			if not '.' in val:
 				val = val + '.'
 			return val
+		if self.vflip:
+			gl_position = 'vec2(gl_FragCoord.x + iTileOffset.x, iResolution.y - gl_FragCoord.y - iTileOffset.y - 1)'
+		else:
+			gl_position = 'gl_FragCoord.xy + iTileOffset'
 		if has_antialias:
 			main = RENDER_MAIN_ANTIALIAS_TEMPLATE.format(
 				x=self.renderer.options.antialias[0],
@@ -1052,7 +1068,10 @@ class RenderPass(BaseRenderPass):
 				y_f=force_float(self.renderer.options.antialias[1]),
 				fps=force_float(self.renderer.options.fps),
 				shutter_speed=force_float(self.renderer.options.shutter_speed),
+				gl_position=gl_position,
 			)
+		else:
+			main = RENDER_MAIN_TEMPLATE.format(gl_position=gl_position)
 		return dict(
 			inputs=COMMON_INPUTS,
 			definitions=COMMON_DEFINITIONS,
@@ -1125,8 +1144,8 @@ class RenderPass(BaseRenderPass):
 				gl.glBindTexture(texture[0], 0)
 
 
-class ImageRenderPass(RenderPass):
-	_framebuffer_internal_format = gl.GL_RGBA32F
+class BaseImageRenderPass(RenderPass):
+	_framebuffer_internal_format = RENDER_FORMAT
 	_fragment_shader_template = IMAGE_FRAGMENT_SHADER_TEMPLATE
 
 	def __init__(self, *args, **kwargs):
@@ -1170,8 +1189,12 @@ class ImageRenderPass(RenderPass):
 		return self.framebuffer
 
 
+class ImageRenderPass(BaseImageRenderPass):
+	vflip = True
+
+
 class VideoRenderPass(BaseRenderPass):
-	_framebuffer_internal_format = gl.GL_RGBA32F
+	_framebuffer_internal_format = RENDER_FORMAT
 
 	def __init__(self, renderer):
 		super().__init__(renderer)
@@ -1239,8 +1262,7 @@ class VideoRenderPass(BaseRenderPass):
 		}
 
 		self.video_framerate_controller = FrameRateController(self.renderer.options.fps, self.renderer.options.render_video_fps)
-		self.current_frame = array.array('f', [0] * self.renderer.options.w * self.renderer.options.h * 3)
-		self.planar_frame = array.array('f', [0] * self.renderer.options.w * self.renderer.options.h * 3)
+		self.current_frame = array.array('f' if RENDER_FORMAT == gl.GL_RGBA32F else 'H', [0] * self.renderer.options.w * self.renderer.options.h * 3)
 		self.motion_blur = self.video_framerate_controller.out_fps < self.video_framerate_controller.fps
 		self.framebuffer = None
 		self.image = None
@@ -1259,7 +1281,7 @@ class VideoRenderPass(BaseRenderPass):
 
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.framebuffer)
 			gl.glBindTexture(gl.GL_TEXTURE_2D, self.image)
-			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_SHORT, None)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, RENDER_FORMAT, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_SHORT, None)
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
 			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
 			gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.image, 0)
@@ -1277,7 +1299,7 @@ class VideoRenderPass(BaseRenderPass):
 
 		gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.conversion_framebuffer)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.conversion_image)
-		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB32F, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, None)
+		gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, RENDER_FORMAT, self.renderer.options.w, self.renderer.options.h, 0, gl.GL_RGB, gl.GL_UNSIGNED_SHORT, None)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
 		gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.conversion_image, 0)
@@ -1322,20 +1344,22 @@ class VideoRenderPass(BaseRenderPass):
 			framebuffer = self.framebuffer if self.motion_blur or self.dithering else self.renderer.output.framebuffer
 			image = self.image if self.motion_blur or self.dithering else self.renderer.output.image
 
-			self.conversion_shader.use()
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.conversion_framebuffer)
-			gl.glActiveTexture(gl.GL_TEXTURE0)
-			gl.glBindTexture(gl.GL_TEXTURE_2D, image)
-			gl.glUniform1i(self.conversion_shader.get_uniform("input_buffer"), 0)
-			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
-			self.renderer.enable_surface_vertex_attrib_array(self.conversion_shader.get_attribute('position'))
-			gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-			self.renderer.disable_surface_vertex_attrib_array(self.conversion_shader.get_attribute('position'))
-			gl.glFinish()
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+			if RENDER_FORMAT == gl.GL_RGBA32F:
+				self.conversion_shader.use()
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.conversion_framebuffer)
+				gl.glActiveTexture(gl.GL_TEXTURE0)
+				gl.glBindTexture(gl.GL_TEXTURE_2D, image)
+				gl.glUniform1i(self.conversion_shader.get_uniform("input_buffer"), 0)
+				gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.renderer.vertex_surface_buffer)
+				self.renderer.enable_surface_vertex_attrib_array(self.conversion_shader.get_attribute('position'))
+				gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+				self.renderer.disable_surface_vertex_attrib_array(self.conversion_shader.get_attribute('position'))
+				gl.glFinish()
+				gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+				image = self.conversion_framebuffer
 
-			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.conversion_framebuffer)
-			gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT, self.current_frame.buffer_info()[0])
+			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, image)
+			gl.glReadPixels(0, 0, self.renderer.options.w, self.renderer.options.h, gl.GL_RGB, gl.GL_FLOAT if RENDER_FORMAT == gl.GL_RGBA32F else gl.GL_UNSIGNED_SHORT, self.current_frame.buffer_info()[0])
 			gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
 			for __ in range(frame_action.emit_frames):
@@ -1352,7 +1376,7 @@ class VideoRenderPass(BaseRenderPass):
 			self.ffmpeg.wait()
 
 
-class BufferRenderPass(ImageRenderPass):
+class BufferRenderPass(BaseImageRenderPass):
 	_framebuffer_internal_format = gl.GL_RGBA32F
 	_fragment_shader_template = BUFFER_FRAGMENT_SHADER_TEMPLATE
 
@@ -1457,7 +1481,7 @@ class Renderer(object):
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vertex_surface_data.itemsize * len(self.vertex_surface_data), self.vertex_surface_data.tobytes(), gl.GL_DYNAMIC_DRAW)
 
 		self.shader = Shader(
-			self.process_shader(TEXTURE_VERTEX_SHADER),
+			self.process_shader(VFLIP_TEXTURE_VERTEX_SHADER),
 			self.process_shader(TEXTURE_FRAGMENT_SHADER)
 		)
 
